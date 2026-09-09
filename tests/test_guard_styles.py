@@ -232,3 +232,24 @@ def test_comparison_pool_depart_after():
     pool = comparison_pool([morning, late, afternoon], depart_after="13:00")
     assert [t.train_code for t in pool] == ["C-A", "C-L"]  # 早班车被过滤，按到达排序
     assert comparison_pool([morning, afternoon])[0].train_code == "C-M"  # 无约束不过滤
+
+
+def test_backfill_arrival_day_evening():
+    """回填：CORE 占走整天后，普通点应补进到达日傍晚碎片窗口。"""
+    from tripflow.models import CityBlock, TransitChoice
+
+    arrive = TransitChoice(kind="direct", date="2026-09-11", code="C1", depart_time="13:07",
+                           arrive_time="14:13", summary="", seats_ok=True, checked_at=0)
+    block = CityBlock(city="珠海", start_date="2026-09-11", end_date="2026-09-12",
+                      arrive_leg=arrive)
+    park = _poi_with("全天园", "10:00-20:00", stay=300)   # CORE：到达日放不下（超闭园）
+    evening = Poi(name="海滨步道", poi_id="p-e", location="104.11,30.61",
+                  stay_minutes=120, opentime="00:00-24:00")  # 24h 开放
+    days, dropped = build_days([block], {"珠海": [park, evening]}, {"珠海": "104.1,30.6"},
+                               {"珠海": {}}, {"珠海": fake_commute}, [])
+    assert not dropped
+    day1_names = [v.poi.name for v in days[0].items]
+    day2_names = [v.poi.name for v in days[1].items]
+    assert day2_names == ["全天园"]           # CORE 在开放窗口内的整天
+    assert day1_names == ["海滨步道"]          # 晚间点回填到达日（此前会留白）
+    assert days[0].items[0].start >= "15:13"  # 到站 14:13 + 60min 缓冲（无锚点故无通勤）

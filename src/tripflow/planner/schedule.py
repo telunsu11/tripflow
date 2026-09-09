@@ -205,34 +205,26 @@ def _fill_block(
     if not valid or not pois:
         return [p.name for p in pois]
 
-    cur_idx = 0
-    cur_time = eff(valid[0][1], valid[0][2])[0]
-    prev: Poi | None = None
-
-    def advance_day() -> None:
-        nonlocal cur_idx, cur_time, prev
-        cur_idx += 1
-        if cur_idx < len(valid):
-            cur_time = eff(valid[cur_idx][1], valid[cur_idx][2])[0]
-            prev = None  # 新的一天默认从住处/市中心出发
+    # 每日独立游标（替代单一前进游标）：晚排序的点可回填更早日的剩余窗口，
+    # 例如 CORE 占走整天后，普通点能补进到达日傍晚的碎片时间。
+    day_time = {i: eff(s, e)[0] for i, (d, s, e) in enumerate(valid)}
+    day_last: dict[int, Poi | None] = {i: None for i in range(len(valid))}
 
     for poi in order_pois(pois, center):
         placed = False
         ow = parse_opentime(poi.opentime)
-        while cur_idx < len(valid):
-            d, s, e = valid[cur_idx]
+        for i, (d, s, e) in enumerate(valid):
             _, w_end = eff(s, e)
-            # 闭馆日（周X不开放）直接顺延到下一天
+            # 闭馆日（周X不开放）跳过
             if ow and parse_date(d).weekday() in ow.closed_weekdays:
-                advance_day()
                 continue
             hard_end = min(w_end, ow.close_min) if ow else w_end
+            prev = day_last[i]
+            origin = prev.location if prev else (anchor[0] if anchor else None)
             leg = None
-            if prev is not None and prev.location != poi.location:
-                leg = commute_fn(prev.location, poi.location)
-            elif prev is None and anchor is not None and anchor[0] != poi.location:
-                leg = commute_fn(anchor[0], poi.location)
-            start = cur_time + (leg.minutes if leg else 0)
+            if origin is not None and origin != poi.location:
+                leg = commute_fn(origin, poi.location)
+            start = day_time[i] + (leg.minutes if leg else 0)
             if ow and start < ow.open_min:
                 start = ow.open_min  # 早到则等开园
             end = start + poi.stay_minutes
@@ -243,11 +235,10 @@ def _fill_block(
                     leg.to_name = poi.name
                     days_map[d].legs.append(leg)
                 days_map[d].items.append(VisitItem(poi=poi, start=min2hm(start), end=min2hm(end)))
-                cur_time = end + buf
-                prev = poi
+                day_time[i] = end + buf
+                day_last[i] = poi
                 placed = True
                 break
-            advance_day()
         if not placed:
             dropped.append(poi.name)
     return dropped
