@@ -2,13 +2,52 @@
 
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass
+
 from ..models import CityBlock, CommuteLeg, DayPlan, Poi, TransitChoice, VisitItem
 from ..providers.amap import AmapClient, AmapError
-from ..util import hm2min, loc_dist, min2hm
+from ..util import hm2min, loc_dist, min2hm, parse_date
 
 DAY_START = 9 * 60 + 30  # 09:30
 DAY_END = 22 * 60  # 22:00（晚间逛街/夜景是旅行常态）
 BUFFER_MIN = 15  # 两个行程点之间的缓冲
+
+# ---- 营业时间解析（高德 opentime 字段的务实启发式）----
+# 形态示例："周一至周日 08:30-18:30 最晚进入17:30" / "10:00-20:00" /
+# "周二至周日 09:00-17:00开放 最晚进入16:30；周一不开放（法定节假日除外）…"
+# 取首个 HH:MM-HH:MM 作当日窗口（多日差异时段取保守值）；
+# 解析失败返回 None（不约束，由"未获取到营业时间"提示兜底）。
+_TIME_RANGE = re.compile(r"(\d{1,2}):(\d{2})\s*[-–—]\s*(\d{1,2}):(\d{2})")
+_LAST_ENTRY = re.compile(r"最晚进入\s*(\d{1,2}):(\d{2})")
+_CLOSED_DAY = re.compile(r"周([一二三四五六日天])不开放")
+_WEEK_CHARS = "一二三四五六日天"
+
+
+@dataclass(frozen=True)
+class OpenWindow:
+    open_min: int
+    close_min: int
+    last_entry: int | None = None
+    closed_weekdays: frozenset[int] = frozenset()  # Monday=0
+
+
+def parse_opentime(opentime: str) -> OpenWindow | None:
+    text = str(opentime or "").strip()
+    if not text:
+        return None
+    m = _TIME_RANGE.search(text)
+    if not m:
+        return None
+    o = int(m[1]) * 60 + int(m[2])
+    c = int(m[3]) * 60 + int(m[4])
+    last_entry = None
+    m2 = _LAST_ENTRY.search(text)
+    if m2:
+        last_entry = int(m2[1]) * 60 + int(m2[2])
+    closed = frozenset(_WEEK_CHARS.index(ch) % 7 for ch in _CLOSED_DAY.findall(text))
+    return OpenWindow(open_min=o, close_min=c, last_entry=last_entry, closed_weekdays=closed)
+
 
 # 风格参数（仅改编排节奏，不改数据来源；均衡为主方案）
 STYLE_PARAMS: dict[str, dict] = {
@@ -170,19 +209,35 @@ def _fill_block(
     cur_time = eff(valid[0][1], valid[0][2])[0]
     prev: Poi | None = None
 
+    def advance_day() -> None:
+        nonlocal cur_idx, cur_time, prev
+        cur_idx += 1
+        if cur_idx < len(valid):
+            cur_time = eff(valid[cur_idx][1], valid[cur_idx][2])[0]
+            prev = None  # 新的一天默认从住处/市中心出发
+
     for poi in order_pois(pois, center):
         placed = False
+        ow = parse_opentime(poi.opentime)
         while cur_idx < len(valid):
             d, s, e = valid[cur_idx]
             _, w_end = eff(s, e)
+            # 闭馆日（周X不开放）直接顺延到下一天
+            if ow and parse_date(d).weekday() in ow.closed_weekdays:
+                advance_day()
+                continue
+            hard_end = min(w_end, ow.close_min) if ow else w_end
             leg = None
             if prev is not None and prev.location != poi.location:
                 leg = commute_fn(prev.location, poi.location)
             elif prev is None and anchor is not None and anchor[0] != poi.location:
                 leg = commute_fn(anchor[0], poi.location)
             start = cur_time + (leg.minutes if leg else 0)
+            if ow and start < ow.open_min:
+                start = ow.open_min  # 早到则等开园
             end = start + poi.stay_minutes
-            if end <= w_end:
+            too_late_entry = ow and ow.last_entry is not None and start > ow.last_entry
+            if not too_late_entry and end <= hard_end:
                 if leg is not None:
                     leg.from_name = prev.name if prev else (anchor[1] if anchor else "")
                     leg.to_name = poi.name
@@ -192,10 +247,7 @@ def _fill_block(
                 prev = poi
                 placed = True
                 break
-            cur_idx += 1
-            if cur_idx < len(valid):
-                cur_time = eff(valid[cur_idx][1], valid[cur_idx][2])[0]
-                prev = None  # 新的一天默认从住处/市中心出发
+            advance_day()
         if not placed:
             dropped.append(poi.name)
     return dropped

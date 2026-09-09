@@ -147,3 +147,88 @@ def test_html_render_all_sections():
         assert needle not in html or needle != "sum_items", f"模板泄漏: {needle}"
     assert "sum_items" not in html  # 过滤器名不应出现在输出
     assert html.startswith("<!DOCTYPE html>")
+
+
+# ---------- 营业时间约束 + 对比表时段过滤（本轮修复） ----------
+def test_parse_opentime_variants():
+    from tripflow.planner.schedule import parse_opentime
+
+    w = parse_opentime("周一至周日 08:30-18:30 最晚进入17:30")
+    assert (w.open_min, w.close_min, w.last_entry) == (510, 1110, 1050)
+
+    w2 = parse_opentime("10:00-20:00")
+    assert (w2.open_min, w2.close_min) == (600, 1200) and w2.last_entry is None
+
+    w3 = parse_opentime("00:00-24:00")
+    assert w3.close_min == 1440
+
+    w4 = parse_opentime("周二至周日 09:00-17:00开放 最晚进入16:30；周一不开放（法定节假日除外）")
+    assert w4.closed_weekdays == frozenset({0})  # 周一闭馆
+
+    assert parse_opentime("") is None
+    assert parse_opentime("具体以官方通知为准") is None
+
+
+def _poi_with(name, opentime, stay=240, loc="104.1,30.6"):
+    return Poi(name=name, poi_id=f"o-{name}", location=loc, stay_minutes=stay,
+               opentime=opentime, core=True)
+
+
+def test_opentime_moves_park_to_next_day():
+    """长隆场景：10:00-20:00 开放，到达日 16:56 起只剩 <4h → 自动落到次日整天。"""
+    from tripflow.models import CityBlock, TransitChoice
+
+    arrive = TransitChoice(kind="direct", date="2026-09-11", code="C1", depart_time="13:07",
+                           arrive_time="14:13", summary="", seats_ok=True, checked_at=0)
+    block = CityBlock(city="珠海", start_date="2026-09-11", end_date="2026-09-13",
+                      arrive_leg=arrive)
+    park = _poi_with("海洋王国", "10:00-20:00", stay=300)  # 5h：15:43 起 → 20:43 超闭园
+    days, dropped = build_days([block], {"珠海": [park]}, {"珠海": "104.1,30.6"},
+                               {"珠海": {}}, {"珠海": fake_commute}, [], style="均衡")
+    assert not dropped
+    day1_items = days[0].items
+    assert all(v.poi.name != "海洋王国" for v in day1_items)  # 到达日闭馆前放不下
+    placed_day = next(d for d in days if d.items)
+    v = placed_day.items[0]
+    assert v.end <= "20:00" and v.start >= "10:00"  # 落在开放窗口内
+
+
+def test_opentime_closed_weekday_skipped():
+    from tripflow.models import CityBlock
+
+    # 2026-09-14 是周一，9/12-9/14 三天：博物馆周一闭馆 → 只能排 12/13
+    block = CityBlock(city="珠海", start_date="2026-09-12", end_date="2026-09-14")
+    museum = _poi_with("博物馆", "周二至周日 09:00-17:00开放 最晚进入16:30；周一不开放", stay=150)
+    days, _dropped = build_days([block], {"珠海": [museum]}, {"珠海": "104.1,30.6"},
+                                 {"珠海": {}}, {"珠海": fake_commute}, [])
+    placed_dates = [d.date for d in days if d.items]
+    assert placed_dates == ["2026-09-12"]  # 排在周六，跳过周一闭馆日
+
+
+def test_last_entry_blocks_late_start():
+    from tripflow.models import CityBlock
+
+    # 最晚进入 16:30；下午 17:00 才可能开始 → 放不下（该日无更早窗口）
+    block = CityBlock(city="珠海", start_date="2026-09-12", end_date="2026-09-12")
+    museum = _poi_with("博物馆", "09:00-17:00开放 最晚进入11:00", stay=150)
+    days, _dropped = build_days([block], {"珠海": [museum]}, {"珠海": "104.1,30.6"},
+                                 {"珠海": {}}, {"珠海": fake_commute}, [])
+    # 09:30 开始 ≤ 最晚进入 11:00 → 能排（此用例验证 11:00 截止不误伤早排）
+    assert days[0].items and days[0].items[0].start >= "09:00"
+
+
+def test_comparison_pool_depart_after():
+    from test_rail_parse import TICKET
+
+    from tripflow.planner.transit import comparison_pool
+    from tripflow.providers.rail import parse_ticket
+
+    morning = parse_ticket({**TICKET, "start_train_code": "C-M", "start_time": "06:30",
+                            "arrive_time": "07:30", "lishi": "01:00"})
+    afternoon = parse_ticket({**TICKET, "start_train_code": "C-A", "start_time": "13:07",
+                              "arrive_time": "14:13", "lishi": "01:06"})
+    late = parse_ticket({**TICKET, "start_train_code": "C-L", "start_time": "15:00",
+                         "arrive_time": "16:10", "lishi": "01:10"})
+    pool = comparison_pool([morning, late, afternoon], depart_after="13:00")
+    assert [t.train_code for t in pool] == ["C-A", "C-L"]  # 早班车被过滤，按到达排序
+    assert comparison_pool([morning, afternoon])[0].train_code == "C-M"  # 无约束不过滤

@@ -229,6 +229,17 @@ def pick_intercity(trains: list[TrainTicket], travelers: int) -> TrainTicket | N
 PICKERS = {"go": pick_go, "intercity": pick_intercity, "back": pick_back}
 
 
+def comparison_pool(
+    trains: list[TrainTicket], depart_after: str = ""
+) -> list[TrainTicket]:
+    """对比表候选：应用用户出发时段下限（无约束则全量），按到达时间排序。"""
+    pool = trains
+    if depart_after:
+        in_window = [t for t in trains if hm2min(t.start_time) >= hm2min(depart_after)]
+        pool = in_window or pool
+    return sorted(pool, key=lambda t: hm2min(t.arrive_time))
+
+
 # ---------- 单段查询 ----------
 async def query_leg(
     rail: RailSession,
@@ -309,7 +320,7 @@ async def plan_transit(rail: RailSession, req, amap=None) -> TransitOutcome:
     same_from = [
         t for t in go_direct if not go_direct or t.from_station == go_direct[0].from_station
     ]
-    for t in sorted(same_from, key=lambda t: hm2min(t.arrive_time))[:3]:
+    for t in comparison_pool(same_from, req.depart_after)[:3]:
         seat_name, price, ok = show_seat(t, travelers)
         rows.append(
             {
@@ -324,7 +335,11 @@ async def plan_transit(rail: RailSession, req, amap=None) -> TransitOutcome:
             }
         )
     plans = await rail.interline(req.depart_date, req.origin, req.cities[0], limit=4)
-    for p in [p for p in plans if interline_feasible(p)][:2]:
+    feasible_plans = [p for p in plans if interline_feasible(p)]
+    if req.depart_after:
+        in_window = [p for p in feasible_plans if hm2min(p.start_time) >= hm2min(req.depart_after)]
+        feasible_plans = in_window or feasible_plans
+    for p in feasible_plans[:2]:
         c = interline_choice(p, travelers, req.depart_date)
         if c:
             rows.append(
@@ -342,4 +357,6 @@ async def plan_transit(rail: RailSession, req, amap=None) -> TransitOutcome:
                 }
             )
 
+    if req.depart_after:
+        notes.append(f"首段对比已按出发时段 ≥ {req.depart_after} 过滤")
     return TransitOutcome(legs=legs, blocks=blocks, comparison=rows, notes=notes)
