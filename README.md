@@ -10,6 +10,7 @@
 - 🗺️ **可分享行程地图**：经高德生成个人专属地图，手机扫码即可在高德 App 打开、逐点导航
 - ☁️ 天气逐日穿插、预算分项核算（实价与估算分开标注）
 - 🔑 **密钥全部走环境变量**：LLM 任意 OpenAI 兼容端点可插拔（GLM / DeepSeek / Qwen / Ollama…）
+- 🎫 `tripflow deals`（可选）：美团酒旅优惠核查——门票价格/免票政策原文附进行程单，预算口径不变
 - 🔒 只读查询：不购票、不支付、不碰你的任何账号
 
 > 状态：**M3 已完成**——多目的地、HTML/日历导出、`refresh`、余票监控 `watch`、住宿候选、跨站换乘校验、本地 Web UI `serve`（实测样例：[examples/chengdu-3d-itinerary.md](examples/chengdu-3d-itinerary.md)）
@@ -47,6 +48,9 @@ uv run tripflow refresh output/成都-2026-09-12.json
 
 # 余票监控：变化即提醒（终端 + 可选 webhook），--once 适合 cron
 uv run tripflow watch output/成都-2026-09-12.json --interval 1800
+
+# 美团优惠核查：按城市查行程单内景点的门票价格/优惠政策，原文附进行程单（可选，需 MEITUAN_HT_TOKEN）
+uv run tripflow deals output/成都-2026-09-12.json --hotels
 
 # 住宿候选快查（高德 POI 级）/ 日历导出 / 本地 Web UI
 uv run tripflow hotels 成都 --near 宽窄巷子

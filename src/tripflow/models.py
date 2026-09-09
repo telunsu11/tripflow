@@ -160,6 +160,17 @@ class BudgetItem(BaseModel):
     note: str = ""
 
 
+class DealSection(BaseModel):
+    """美团优惠参考（原文引用，非结构化数据；仅信息展示）。"""
+
+    city: str
+    topic: str  # 门票 / 住宿
+    query: str
+    content: str  # 美团返回的 Markdown 原文（已清洗）
+    price_hint: str = ""  # 从原文提取的成人参考价（如 "成人 ¥50 起"），仅为提示
+    checked_at: float
+
+
 class Feasibility(BaseModel):
     status: str  # FEASIBLE | FEASIBLE_WITH_RISK | INFEASIBLE
     issues: list[str] = Field(default_factory=list)
@@ -172,6 +183,7 @@ class Itinerary(BaseModel):
     comparison: list[dict] = Field(default_factory=list)
     days: list[DayPlan] = Field(default_factory=list)
     hotels: list[HotelPick] = Field(default_factory=list)
+    deals: list[DealSection] = Field(default_factory=list)
     budget: list[BudgetItem] = Field(default_factory=list)
     total_cost: float = 0
     feasibility: Feasibility

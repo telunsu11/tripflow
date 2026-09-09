@@ -63,5 +63,6 @@ def render_html(it: Itinerary, qr_png: Path | None = None) -> str:
         status_class=STATUS_CLASS.get(it.feasibility.status, "risk"),
         qr_uri=qr_uri,
         date_cn=fmt_date,
+        ts_cn=fmt_ts,
     )
     return html

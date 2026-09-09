@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     amap_api_key: str = ""
     amap_mcp_url: str = ""
 
+    # ---- 美团酒旅（可选，优惠核查用；developer.meituan.com 申请）----
+    meituan_ht_token: str = ""
+
     # ---- 12306（默认 npx 拉起社区 MCP；高级用户可换 stdio 命令或 SSE 远程端点）----
     rail_mcp_mode: Literal["stdio", "sse"] = "stdio"
     rail_mcp_command: str = "npx"

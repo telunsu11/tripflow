@@ -124,6 +124,21 @@
     </table>
   </section>
 
+  {% if it.deals %}
+  <section>
+    <h2>美团优惠参考（原文引用，非预算依据）</h2>
+    {% for deal in it.deals %}
+    <div class="day">
+      <h3>{{ deal.city }} · {{ deal.topic }}
+        {% if deal.price_hint %}<span class="city">{{ deal.price_hint }}</span>{% endif %}
+        <span class="ts">查询于 {{ ts_cn(deal.checked_at) }}</span></h3>
+      <div style="white-space:pre-wrap;font-size:13.5px">{{ deal.content }}</div>
+    </div>
+    {% endfor %}
+    <div class="note">以上为美团酒旅接口返回的原文（含优惠政策），价格以实际下单页为准；预算表中的门票/住宿仍为类型估算。</div>
+  </section>
+  {% endif %}
+
   <section>
     <h2>可行性结论</h2>
     <div class="banner {{ status_class }}">{{ status_text }}</div>

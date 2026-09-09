@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import sys
 import time
 from dataclasses import dataclass
@@ -115,6 +116,27 @@ def _check_amap_mcp(s: Settings) -> Check:
         )
 
 
+def _check_meituan(s: Settings) -> Check:
+    """非关键：美团优惠查询（Token 即配置即用，真实查询较慢故 doctor 只做静态检查）。"""
+    if not s.meituan_ht_token:
+        return Check(
+            "美团优惠(可选)",
+            "warn",
+            "未配置 MEITUAN_HT_TOKEN——tripflow deals 不可用（可选功能，不影响规划）",
+            critical=False,
+        )
+    if shutil.which("npx") is None:
+        return Check(
+            "美团优惠(可选)", "warn", "已配置 Token 但找不到 npx（需 Node.js）", critical=False
+        )
+    return Check(
+        "美团优惠(可选)",
+        "ok",
+        "Token 已配置（静态检查；用 tripflow deals 实测查询）",
+        critical=False,
+    )
+
+
 def _check_rail(s: Settings) -> Check:
     async def run() -> tuple[int, str]:
         async with RailSession(s) as rail:
@@ -152,6 +174,7 @@ def doctor(
     if mcp:
         checks.append(_check_amap_mcp(s))
         checks.append(_check_rail(s))
+        checks.append(_check_meituan(s))
 
     icons = {"ok": "[green]✅[/]", "warn": "[yellow]⚠️ [/]", "fail": "[red]❌[/]"}
     table = Table(show_header=True, header_style="bold")
@@ -535,6 +558,67 @@ def hotels(
         table.add_row(h.name, h.rating or "—", h.cost or "—", h.address or "—")
     console.print(table)
     console.print("[dim]POI 级信息展示，不含预订；价格以实际渠道为准[/]")
+
+
+# ============================================================
+# deals：美团优惠核查
+# ============================================================
+@app.command()
+def deals(
+    target: Annotated[Path, typer.Argument(help="行程单 JSON 路径")],
+    hotels_flag: Annotated[
+        bool, typer.Option("--hotels", help="同时查询住宿优惠（默认仅门票）")
+    ] = False,
+) -> None:
+    """按城市对既有行程单做美团优惠核查（原文附进行程单，预算口径不变）。"""
+    import json as _json
+
+    from .deliver.html import render_html
+    from .deliver.markdown import render
+    from .models import Itinerary
+    from .planner.deals import run_deals
+    from .providers.meituan import MeituanClient, MeituanError
+
+    s = get_settings()
+    if not s.meituan_ht_token:
+        console.print(
+            "[red]未配置 MEITUAN_HT_TOKEN[/]（https://developer.meituan.com/zh/v2/dev/token 申请）"
+        )
+        raise typer.Exit(1)
+
+    itinerary = Itinerary.model_validate(_json.loads(target.read_text("utf-8")))
+    n_queries = len({d.city for d in itinerary.days}) * (2 if hotels_flag else 1)
+    console.print(
+        f"对 [bold]{target.name}[/] 做美团优惠核查（{n_queries} 次查询，"
+        "单次可能需要 1–2 分钟，请稍候…）"
+    )
+
+    try:
+        client = MeituanClient(s.meituan_ht_token)
+        itinerary, failures = run_deals(client, itinerary, with_hotels=hotels_flag)
+    except MeituanError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(1) from exc
+
+    itinerary.feasibility.notes.append(
+        f"已于 {time.strftime('%Y-%m-%d %H:%M:%S')} 附加美团优惠参考（原文引用，非预算依据）"
+    )
+    md_path = target.with_suffix(".md")
+    html_path = target.with_suffix(".html")
+    qr_path = target.with_name(target.stem + "-map-qr.png")
+    md_path.write_text(render(itinerary), encoding="utf-8")
+    html_path.write_text(
+        render_html(itinerary, qr_path if qr_path.exists() else None), encoding="utf-8"
+    )
+    target.write_text(itinerary.model_dump_json(indent=2), encoding="utf-8")
+
+    console.rule("[bold]美团优惠核查完成[/]")
+    for deal in itinerary.deals:
+        hint = f"（{deal.price_hint}）" if deal.price_hint else ""
+        console.print(f"  ✅ {deal.city}·{deal.topic}{hint}")
+    for f in failures:
+        console.print(f"  ❌ {f}")
+    console.print(f"已更新: {md_path} / {html_path} / {target.name}")
 
 
 # ============================================================

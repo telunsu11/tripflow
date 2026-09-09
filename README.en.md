@@ -12,6 +12,7 @@ Every number in a tripflow itinerary — ticket availability, prices, commute ti
 - 📄 Deliverables: Markdown + standalone HTML (QR embedded) + machine-readable JSON with full evidence chain
 - 🔄 `tripflow refresh`: re-check tickets and weather before departure, keep the plan intact
 - 🔑 **All credentials via environment variables** — any OpenAI-compatible LLM endpoint works (GLM / DeepSeek / Qwen / Ollama…)
+- 🎫 `tripflow deals` (optional): Meituan hotel-and-travel deal check — ticket prices & policies quoted verbatim into the itinerary
 - 🔒 Read-only: no booking, no payments, never touches your accounts
 
 > Status: **M3 complete** — .ics calendar export, ticket monitoring (`watch` + webhook), hotel picks (Amap POI), cross-station transfer validation, local Web UI (`serve`). Chinese docs (primary): [README.md](README.md).
@@ -47,6 +48,7 @@ uv run tripflow plan "Sept 12–15, Shanghai to Suzhou and Hangzhou, 2 people, �
 uv run tripflow refresh output/苏州-杭州-2026-09-12.json
 uv run tripflow watch output/苏州-杭州-2026-09-12.json --interval 1800
 
+uv run tripflow deals output/成都-2026-09-12.json --hotels   # Meituan deals check (optional)
 uv run tripflow hotels 成都 --near 宽窄巷子   # hotel picks (Amap POI)
 uv run tripflow ical output/成都-2026-09-12.json   # .ics calendar export
 uv run tripflow serve                          # local Web UI (127.0.0.1)

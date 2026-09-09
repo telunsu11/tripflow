@@ -115,6 +115,24 @@ def render(it: Itinerary) -> str:
     add(f"| **合计** | **¥{it.total_cost:.0f}** | | 人均约 ¥{per_person:.0f} |")
     add("")
 
+    if it.deals:
+        add("## 美团优惠参考（原文引用，非预算依据）")
+        add("")
+        for deal in it.deals:
+            add(
+                f"### {deal.city} · {deal.topic}"
+                f"{'｜' + deal.price_hint if deal.price_hint else ''}"
+                f"  <sub>查询于 {fmt_ts(deal.checked_at)}</sub>"
+            )
+            add("")
+            add(deal.content)
+            add("")
+        add(
+            "> 以上为美团酒旅接口返回的原文（含优惠政策），价格以实际下单页为准；"
+            "预算表中的门票/住宿仍为类型估算。"
+        )
+        add("")
+
     add("## 可行性结论")
     add("")
     add(f"**{STATUS_EMOJI.get(it.feasibility.status, it.feasibility.status)}**")
