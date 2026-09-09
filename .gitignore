@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+dist/
+build/
+
+# 密钥与本地数据：.env 永不入库
+.env
+output/
+
+# 工具缓存
+.pytest_cache/
+.ruff_cache/
+
+# OS
+.DS_Store

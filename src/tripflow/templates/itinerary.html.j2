@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ it.request.origin }} → {{ it.request.destination }} 行程单 · tripflow</title>
+<style>
+  :root { --ink:#1f2933; --dim:#5b6b76; --line:#e4e7eb; --accent:#0b6e4f; --bg:#f7f8f9; --card:#fff; --warn:#b26a00; --bad:#b3261e; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; color:var(--ink); background:var(--bg); line-height:1.65; }
+  .wrap { max-width:860px; margin:0 auto; padding:24px 16px 64px; }
+  header.hero { background:var(--accent); color:#fff; border-radius:14px; padding:26px 26px 22px; }
+  header.hero h1 { margin:0 0 6px; font-size:22px; }
+  header.hero .meta { opacity:.92; font-size:13px; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px 22px; margin-top:16px; }
+  h2 { font-size:16px; margin:0 0 12px; color:var(--accent); border-bottom:1px solid var(--line); padding-bottom:8px; }
+  .leg { padding:10px 0; border-bottom:1px dashed var(--line); }
+  .leg:last-child { border-bottom:none; }
+  .leg .tag { display:inline-block; background:#eaf5f0; color:var(--accent); border-radius:6px; padding:1px 8px; font-size:12px; margin-right:8px; }
+  .leg .ts { color:var(--dim); font-size:12px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { padding:7px 8px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
+  th { color:var(--dim); font-weight:600; white-space:nowrap; }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .day { border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin-bottom:12px; }
+  .day h3 { margin:0 0 8px; font-size:15px; }
+  .day .city { color:var(--accent); }
+  .day .weather { color:var(--dim); font-size:13px; font-weight:400; }
+  .visit { margin:8px 0 8px 0; padding-left:10px; border-left:3px solid #cfe5db; }
+  .visit .time { font-weight:700; font-variant-numeric:tabular-nums; }
+  .visit .sub { color:var(--dim); font-size:12.5px; margin:2px 0 0; }
+  .legline { color:var(--dim); font-size:12.5px; margin:4px 0 4px 14px; }
+  .note { color:var(--dim); font-size:12.5px; }
+  .banner { border-radius:10px; padding:12px 14px; font-weight:600; }
+  .banner.ok { background:#eaf5f0; color:var(--accent); }
+  .banner.risk { background:#fdf3e4; color:var(--warn); }
+  .banner.bad { background:#fbe9e7; color:var(--bad); }
+  ul.plain { margin:8px 0 0; padding-left:20px; }
+  ul.plain li { margin:4px 0; }
+  .mapbox { display:flex; gap:18px; align-items:center; flex-wrap:wrap; }
+  .mapbox img { width:150px; height:150px; border:1px solid var(--line); border-radius:10px; }
+  .est { background:#f2f4f5; border-radius:5px; padding:0 5px; font-size:12px; }
+  footer { color:var(--dim); font-size:12px; text-align:center; margin-top:20px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="hero">
+    <h1>{{ route_title }} ｜ {{ req.depart_date }} – {{ req.return_date }} ｜ {{ req.travelers }} 人{% if budget_text %} ｜ {{ budget_text }}{% endif %}</h1>
+    <div class="meta">由 tripflow 生成于 {{ it.generated_at }} · 票价/余票来自 12306 实时查询 · 估算项均已标注</div>
+  </header>
+
+  {% if req.assumptions %}
+  <section>
+    <h2>规划假设（请确认）</h2>
+    <ul class="plain">{% for a in req.assumptions %}<li>{{ a }}</li>{% endfor %}</ul>
+  </section>
+  {% endif %}
+
+  <section>
+    <h2>跨城交通</h2>
+    {% for leg in legs_view %}
+      <div class="leg">
+        {% if leg.choice %}
+          <span class="tag">{{ leg.label }}</span>{{ leg.choice.from_city }} → {{ leg.choice.to_city }}（{{ leg.date_cn }}）<br>
+          {{ leg.choice.summary }} <span class="ts">查询于 {{ leg.checked_cn }}</span>
+        {% else %}
+          <span class="tag">{{ leg.label }}</span>❌ 无可用班次（直达与中转均未找到）
+        {% endif %}
+      </div>
+    {% endfor %}
+    {% if it.comparison %}
+    <h2 style="margin-top:16px">首段方案对比</h2>
+    <table>
+      <tr>{% for k in comparison_keys %}<th>{{ k }}</th>{% endfor %}</tr>
+      {% for row in it.comparison %}<tr>{% for k in comparison_keys %}<td>{{ row.get(k, "") }}</td>{% endfor %}</tr>{% endfor %}
+    </table>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>逐日行程</h2>
+    {% for day in it.days %}
+    <div class="day">
+      <h3>Day {{ loop.index }} · {{ date_cn(day.date) }}{% if day.city %} · <span class="city">{{ day.city }}</span>{% endif %}{% if day.weather %} · <span class="weather">{{ day.weather }}</span>{% endif %}</h3>
+      {% if not day.items %}<div class="note">（自由活动）</div>{% endif %}
+      {% for v in day.items %}
+      <div class="visit">
+        <div><span class="time">{{ v.start }}–{{ v.end }}</span> <strong>{{ v.poi.name }}</strong>{% if v.poi.rating %} <span class="note">评分 {{ v.poi.rating }}</span>{% endif %}</div>
+        {% if v.poi.reason %}<div class="sub">{{ v.poi.reason }}</div>{% endif %}
+        {% if v.poi.opentime %}<div class="sub">营业时间（高德核实）：{{ v.poi.opentime }}</div>{% endif %}
+      </div>
+      {% endfor %}
+      {% for leg in day.legs %}<div class="legline">↳ {{ leg.from_name }} → {{ leg.to_name }}：{{ leg.mode }} 约 {{ leg.minutes }} 分钟{% if leg.lines %}（{{ leg.lines | join('→') if leg.lines else '' }}）{% endif %}</div>{% endfor %}
+      {% for note in day.notes %}<div class="note">ℹ️ {{ note }}</div>{% endfor %}
+    </div>
+    {% endfor %}
+  </section>
+
+  {% if it.hotels %}
+  <section>
+    <h2>住宿候选（高德 POI，不含预订）</h2>
+    <table>
+      <tr><th>城市</th><th>酒店</th><th>评分</th><th>参考价</th><th>地址</th></tr>
+      {% for h in it.hotels %}
+      <tr><td>{{ h.city }}</td><td><strong>{{ h.name }}</strong></td>
+          <td>{{ h.rating or '—' }}</td><td>{{ h.cost or '—' }}</td>
+          <td class="note">{{ h.address or '—' }}</td></tr>
+      {% endfor %}
+    </table>
+  </section>
+  {% endif %}
+
+  <section>
+    <h2>预算</h2>
+    <table>
+      <tr><th>项目</th><th style="text-align:right">金额</th><th>性质</th><th>说明</th></tr>
+      {% for b in it.budget %}
+      <tr><td>{{ b.category }}</td><td class="num">¥{{ "%.0f" | format(b.amount) }}</td>
+          <td>{% if b.kind == "real" %}实价{% else %}<span class="est">估算</span>{% endif %}</td><td>{{ b.note }}</td></tr>
+      {% endfor %}
+      <tr><td><strong>合计</strong></td><td class="num"><strong>¥{{ "%.0f" | format(it.total_cost) }}</strong></td>
+          <td></td><td>人均约 ¥{{ "%.0f" | format(it.total_cost / req.travelers) }}</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>可行性结论</h2>
+    <div class="banner {{ status_class }}">{{ status_text }}</div>
+    {% if it.feasibility.issues %}
+    <ul class="plain">{% for i in it.feasibility.issues %}<li>⚠️ {{ i }}</li>{% endfor %}</ul>
+    {% endif %}
+    {% if it.feasibility.notes %}
+    <ul class="plain">{% for n in it.feasibility.notes %}<li class="note">{{ n }}</li>{% endfor %}</ul>
+    {% endif %}
+  </section>
+
+  {% if it.map_uri %}
+  <section>
+    <h2>行程地图（高德）</h2>
+    <div class="mapbox">
+      {% if qr_uri %}<img src="{{ qr_uri }}" alt="高德行程地图二维码">{% endif %}
+      <div>
+        <div>用高德 App 扫码打开本行程的专属地图，逐点导航。</div>
+        <div class="note" style="word-break:break-all">{{ it.map_uri }}</div>
+      </div>
+    </div>
+  </section>
+  {% endif %}
+
+  <footer>tripflow · 余票以 12306 为准 · 估算项为经验值，不构成消费建议 · 出发前可运行 tripflow refresh</footer>
+</div>
+</body>
+</html>
