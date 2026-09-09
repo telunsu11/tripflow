@@ -52,7 +52,10 @@ def render_html(it: Itinerary, qr_png: Path | None = None) -> str:
         )
     comparison_keys = list(it.comparison[0].keys()) if it.comparison else []
 
-    html = tpl.render(
+    def _sum_items(days) -> int:
+        return sum(len(d.items) for d in days)
+
+    html = tpl.render(sum_items=_sum_items,
         it=it,
         req=req,
         route_title=route_title,

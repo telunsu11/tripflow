@@ -351,20 +351,6 @@ def _step(idx: int, total: int, text: str) -> None:
     console.print(f"[bold cyan]\\[{idx}/{total}][/bold cyan] {text}")
 
 
-def _station_point(amap: AmapClient, station_name: str, city: str) -> dict | None:
-    """把火车站名解析为地图打点（不要求是景点类 POI）。"""
-    try:
-        places = amap.place_text(station_name, city=city, limit=1)
-        if places:
-            from .util import parse_loc
-
-            lng, lat = parse_loc(places[0].location)
-            return {"name": places[0].name, "lon": lng, "lat": lat, "poiId": places[0].id}
-    except Exception:  # noqa: BLE001, S110 - 打点失败不应影响行程单
-        pass
-    return None
-
-
 @app.command()
 def plan(
     request: str = typer.Argument(
@@ -379,6 +365,9 @@ def plan(
             "--with-hotel-prices",
             help="经美团查每城住宿报价（需 MEITUAN_HT_TOKEN，每城约多等 1–2 分钟）",
         )
+    ] = False,
+    compare_styles: Annotated[
+        bool, typer.Option("--compare-styles", help="附加紧凑/休闲两种编排方案的对比")
     ] = False,
 ) -> None:
     """端到端规划：需求 → 交通 → POI → 逐日编排 → 住宿选店 → 预算 → 可行性 → 行程单+地图+日历。"""
@@ -418,6 +407,7 @@ def plan(
             interactive_cb=interactive,
             include_hotels=not no_hotels,
             with_hotel_prices=with_hotel_prices,
+            compare_styles=compare_styles,
         )
     except LLMError as exc:
         console.print(f"[red]{exc}[/]")
@@ -469,6 +459,26 @@ def ical(
 # ============================================================
 # watch：余票监控
 # ============================================================
+def _guard_check(itinerary, *, final_24h: bool) -> tuple[list, list]:
+    """天气预警 + （最终24h）营业时间复查；天气更新直接改写 day.weather 由调用方处理。"""
+    from .planner.guard import opentime_changes, weather_alerts
+    from .providers.amap import AmapClient
+
+    alerts: list[str] = []
+    updates: list = []
+    with AmapClient(get_settings().amap_api_key) as amap:
+        forecasts_by_city = {}
+        for city in {d.city for d in itinerary.days if d.city}:
+            try:
+                forecasts_by_city[city] = amap.weather(city)
+            except Exception:  # noqa: BLE001, S112 - 单城失败跳过
+                continue
+        alerts, updates = weather_alerts(itinerary.days, forecasts_by_city)
+        if final_24h:
+            alerts = alerts + opentime_changes(itinerary, amap)
+    return alerts, updates
+
+
 @app.command()
 def watch(
     target: Annotated[Path, typer.Argument(help="行程单 JSON 路径")],
@@ -484,6 +494,7 @@ def watch(
     import json as _json
 
     from .models import Itinerary
+    from .planner.guard import is_final_24h
     from .planner.watch import diff_snapshots, notify_webhook, snapshot, watch_once
 
     s = get_settings()
@@ -510,6 +521,14 @@ def watch(
         else:
             now = time.strftime("%H:%M:%S")
             changes = diff_snapshots(prev, snapshot(itinerary))
+            # —— 出行守护：天气预警（覆盖期内总是查）+ 最终 24h 营业时间复查 ——
+            if s.amap_api_key:
+                alerts, updates = _guard_check(itinerary, final_24h=is_final_24h(
+                    itinerary.request.depart_date))
+                for day, new_text in updates:
+                    changes.append(f"{day.date} {day.city}天气：{day.weather} → {new_text}")
+                    day.weather = new_text  # 行程单天气同步为最新预报
+                changes.extend(alerts)
             if changes:
                 console.print(f"[{now}] [bold yellow]发现变化[/]")
                 for c in changes:

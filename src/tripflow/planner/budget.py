@@ -7,36 +7,15 @@ import math
 from ..models import BudgetItem, Poi, TransitChoice
 from ..util import parse_date
 
-# 城市档次 → 每间夜参考价（估算值；暂不查 OTA，后续接高德酒店 POI）
-HOTEL_PER_NIGHT = {
-    "北京": 450,
-    "上海": 450,
-    "深圳": 420,
-    "广州": 380,
-    "杭州": 350,
-    "南京": 330,
-    "苏州": 330,
-    "厦门": 340,
-    "武汉": 300,
-    "长沙": 300,
-    "西安": 290,
-    "重庆": 300,
-    "成都": 300,
-    "昆明": 300,
-    "贵阳": 280,
-    "哈尔滨": 280,
-    "青岛": 320,
-    "大连": 310,
-}
-HOTEL_DEFAULT = 300
-FOOD_PER_PERSON_DAY = 150
-
 
 def hotel_per_night(destination: str) -> int:
-    for city, price in HOTEL_PER_NIGHT.items():
+    from .reference import hotel_prices
+
+    prices, default = hotel_prices()
+    for city, price in prices.items():
         if city in destination:
             return price
-    return HOTEL_DEFAULT
+    return default
 
 
 def build_budget(
@@ -92,13 +71,16 @@ def build_budget(
         )
     )
 
-    food = FOOD_PER_PERSON_DAY * n * req.days
+    from .reference import daily_costs
+
+    food_per_day = daily_costs()["food_per_person_day"]
+    food = food_per_day * n * req.days
     items.append(
         BudgetItem(
             category="餐饮",
             amount=food,
             kind="estimate",
-            note=f"{n} 人 × {req.days} 天 × 约 ¥{FOOD_PER_PERSON_DAY}/人/天（估算）",
+            note=f"{n} 人 × {req.days} 天 × 约 ¥{food_per_day}/人/天（估算）",
         )
     )
 

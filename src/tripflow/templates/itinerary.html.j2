@@ -97,6 +97,31 @@
     {% endfor %}
   </section>
 
+  {% if it.style_variants %}
+  <section>
+    <h2>多风格方案对比（同一批车次/景点/住宿，仅编排节奏不同）</h2>
+    <table>
+      <tr><th>风格</th><th>排入景点</th><th>未排入</th><th>预算</th><th>结论</th></tr>
+      <tr><td><strong>均衡（主方案）</strong></td>
+          <td class="num">{{ sum_items(it.days) }}</td><td class="num">—</td>
+          <td class="num">¥{{ "%.0f" | format(it.total_cost) }}</td><td>{{ it.feasibility.status }}</td></tr>
+      {% for v in it.style_variants %}
+      <tr><td>{{ v.name }}</td>
+          <td class="num">{{ sum_items(v.days) }}</td><td class="num">{{ v.dropped | length }}</td>
+          <td class="num">¥{{ "%.0f" | format(v.total_cost) }}</td><td>{{ v.status }}</td></tr>
+      {% endfor %}
+    </table>
+    {% for v in it.style_variants %}
+    <div class="day"><h3>{{ v.name }} · 逐日概览</h3>
+      {% for d in v.days %}<div class="legline">Day {{ loop.index }}（{{ d.city }}）：
+        {% for x in d.items %}{{ x.poi.name }}{% if not loop.last %} → {% endif %}{% endfor %}</div>{% endfor %}
+      {% if v.dropped %}<div class="note">未排入：{{ v.dropped | join('、') }}</div>{% endif %}
+    </div>
+    {% endfor %}
+    <div class="note">上文逐日详情、地图与日历均基于主方案（均衡）。</div>
+  </section>
+  {% endif %}
+
   {% if it.stays %}
   <section>
     <h2>住宿安排（确定性选店：评分优先、距活动区就近）</h2>

@@ -115,6 +115,7 @@ def nominate_pois(
             {"role": "system", "content": NOMINATE_SYSTEM},
             {"role": "user", "content": user},
         ],
+        model=llm.fast_model,  # 提名只需出名字和理由，用轻模型即可（未配置则同主模型）
         temperature=0.3,
     )
     data = extract_json_object(raw)

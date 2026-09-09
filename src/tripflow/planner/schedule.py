@@ -9,6 +9,13 @@ from ..util import hm2min, loc_dist, min2hm
 DAY_START = 9 * 60 + 30  # 09:30
 DAY_END = 22 * 60  # 22:00（晚间逛街/夜景是旅行常态）
 BUFFER_MIN = 15  # 两个行程点之间的缓冲
+
+# 风格参数（仅改编排节奏，不改数据来源；均衡为主方案）
+STYLE_PARAMS: dict[str, dict] = {
+    "均衡": {},
+    "紧凑": {"day_start": 9 * 60, "day_end": 22 * 60 + 30, "buffer": 10},
+    "休闲": {"day_start": 10 * 60, "day_end": 21 * 60, "buffer": 25},
+}
 ARRIVAL_BUFFER = 60  # 到站后 60 分钟开始游玩
 DEPART_BUFFER = 90  # 提前 90 分钟到站
 MIN_WINDOW = 60  # 窗口不足 1 小时视为无效
@@ -130,15 +137,22 @@ def _fill_block(
     days_map: dict[str, DayPlan],
     notes_out: list[str],
     anchor: tuple[str, str] | None = None,
+    style: str = "均衡",
 ) -> list[str]:
     """把 POI 贪心填进一个城市块，返回未排入的 POI 名。
 
     anchor=(location, name) 为建议住宿锚点：每日首段通勤从酒店出发；
     无锚点时保持旧行为（首点不计通勤，按住处就近假设）。"""
+    ov = STYLE_PARAMS.get(style) or {}
+    d_start = ov.get("day_start", DAY_START)
+    d_end = ov.get("day_end", DAY_END)
+    buf = ov.get("buffer", BUFFER_MIN)
+
+    def eff(s: int | None, e: int | None) -> tuple[int, int]:
+        return (s if s is not None else d_start, e if e is not None else d_end)
+
     wins = block_windows(block)
-    valid = [
-        (d, s, e) for (d, s, e) in wins if (_effective(s, e)[1] - _effective(s, e)[0]) >= MIN_WINDOW
-    ]
+    valid = [(d, s, e) for (d, s, e) in wins if (eff(s, e)[1] - eff(s, e)[0]) >= MIN_WINDOW]
     for d, s, e in wins:
         if (d, s, e) not in valid:
             days_map[d].notes.append("本日不安排景点（被交通占用）")
@@ -153,14 +167,14 @@ def _fill_block(
         return [p.name for p in pois]
 
     cur_idx = 0
-    cur_time = _effective(valid[0][1], valid[0][2])[0]
+    cur_time = eff(valid[0][1], valid[0][2])[0]
     prev: Poi | None = None
 
     for poi in order_pois(pois, center):
         placed = False
         while cur_idx < len(valid):
             d, s, e = valid[cur_idx]
-            _, w_end = _effective(s, e)
+            _, w_end = eff(s, e)
             leg = None
             if prev is not None and prev.location != poi.location:
                 leg = commute_fn(prev.location, poi.location)
@@ -174,13 +188,13 @@ def _fill_block(
                     leg.to_name = poi.name
                     days_map[d].legs.append(leg)
                 days_map[d].items.append(VisitItem(poi=poi, start=min2hm(start), end=min2hm(end)))
-                cur_time = end + BUFFER_MIN
+                cur_time = end + buf
                 prev = poi
                 placed = True
                 break
             cur_idx += 1
             if cur_idx < len(valid):
-                cur_time = _effective(valid[cur_idx][1], valid[cur_idx][2])[0]
+                cur_time = eff(valid[cur_idx][1], valid[cur_idx][2])[0]
                 prev = None  # 新的一天默认从住处/市中心出发
         if not placed:
             dropped.append(poi.name)
@@ -195,8 +209,9 @@ def build_days(
     commute_fns: dict[str, object],
     schedule_notes: list[str],
     anchors: dict[str, tuple[str, str]] | None = None,
+    style: str = "均衡",
 ) -> tuple[list[DayPlan], list[str]]:
-    """多城市逐块编排；anchors 为各城住宿锚点 {city: (location, name)}。
+    """多城市逐块编排；anchors 为各城住宿锚点；style 见 STYLE_PARAMS。
 
     返回 (按日期排序的全部 DayPlan, 未排入 POI 列表)。"""
     all_days: list[DayPlan] = []
@@ -219,6 +234,7 @@ def build_days(
             days_map,
             schedule_notes,
             anchor=(anchors or {}).get(city),
+            style=style,
         )
         dropped.extend(f"{name}（{city}）" for name in block_dropped)
         for day in days_map.values():

@@ -37,27 +37,6 @@ def allocate_days(
     return out
 
 
-# 主要城市的枢纽站集合（远郊站如 上海松江/金山北、苏州南 不在内）；
-# 未覆盖城市退化为城市名子串匹配
-HUB_STATIONS: dict[str, set[str]] = {
-    "上海": {"上海", "上海虹桥", "上海南", "上海西"},
-    "北京": {"北京", "北京南", "北京西", "北京北", "北京朝阳", "北京丰台"},
-    "广州": {"广州", "广州南", "广州东", "广州白云"},
-    "深圳": {"深圳", "深圳北", "深圳东", "深圳福田"},
-    "杭州": {"杭州", "杭州东", "杭州南", "杭州西"},
-    "苏州": {"苏州", "苏州北", "苏州园区", "苏州新区"},
-    "南京": {"南京", "南京南", "南京东"},
-    "成都": {"成都", "成都东", "成都南", "成都西"},
-    "重庆": {"重庆", "重庆北", "重庆西", "重庆沙坪坝"},
-    "武汉": {"武汉", "汉口", "武昌", "武汉东"},
-    "西安": {"西安", "西安北"},
-    "长沙": {"长沙", "长沙南"},
-    "郑州": {"郑州", "郑州东"},
-    "天津": {"天津", "天津西", "天津南"},
-    "合肥": {"合肥", "合肥南"},
-    "昆明": {"昆明", "昆明南"},
-}
-
 
 def prefer_hub_stations(
     trains: list[TrainTicket], frm_city: str, to_city: str
@@ -65,7 +44,9 @@ def prefer_hub_stations(
     """出发/到达优先落在该城市的枢纽站；无匹配时回退。"""
     keep = trains
     for city, attr in ((frm_city, "from_station"), (to_city, "to_station")):
-        hubs = HUB_STATIONS.get(city)
+        from .reference import hub_stations
+
+        hubs = hub_stations().get(city)
         if not hubs:
             continue
         hub_trains = [t for t in keep if getattr(t, attr) in hubs]

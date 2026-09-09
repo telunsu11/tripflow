@@ -14,6 +14,9 @@ Every number in a tripflow itinerary — ticket availability, prices, commute ti
 - 🔄 `tripflow refresh`: re-check tickets and weather before departure, keep the plan intact
 - 🔑 **All credentials via environment variables** — any OpenAI-compatible LLM endpoint works (GLM / DeepSeek / Qwen / Ollama…)
 - 🎫 `tripflow deals` (optional): Meituan hotel-and-travel deal check — ticket prices & policies quoted verbatim into the itinerary
+- 🛡️ **Departure guardian**: `watch` monitors not just tickets — severe-weather alerts, forecast changes, and opening-hours recheck in the final 24h before departure
+- 🎭 **Style comparison**: `--compare-styles` appends compact/relaxed variants (deterministic pipeline, same input → same output)
+- 📊 Overridable reference data: hub stations / hotel prices / daily food costs live in `data/*.yaml`; drop same-named files into `~/.tripflow/data/` to merge
 - 🔒 Read-only: no booking, no payments, never touches your accounts
 
 > Status: **M3 complete** — .ics calendar export, ticket monitoring (`watch` + webhook), hotel picks (Amap POI), cross-station transfer validation, local Web UI (`serve`). Chinese docs (primary): [README.md](README.md).

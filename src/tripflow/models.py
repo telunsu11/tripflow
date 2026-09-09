@@ -174,6 +174,16 @@ class BudgetItem(BaseModel):
     note: str = ""
 
 
+class StyleVariant(BaseModel):
+    """多风格对比方案：同一批车次/景点/住宿，仅编排节奏不同。"""
+
+    name: str
+    days: list[DayPlan] = Field(default_factory=list)
+    dropped: list[str] = Field(default_factory=list)
+    total_cost: float = 0
+    status: str = ""
+
+
 class DealSection(BaseModel):
     """美团优惠参考（原文引用，非结构化数据；仅信息展示）。"""
 
@@ -198,6 +208,7 @@ class Itinerary(BaseModel):
     days: list[DayPlan] = Field(default_factory=list)
     hotels: list[HotelPick] = Field(default_factory=list)
     stays: list[HotelStay] = Field(default_factory=list)
+    style_variants: list[StyleVariant] = Field(default_factory=list)
     deals: list[DealSection] = Field(default_factory=list)
     budget: list[BudgetItem] = Field(default_factory=list)
     total_cost: float = 0

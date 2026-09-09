@@ -93,6 +93,33 @@ def render(it: Itinerary) -> str:
             add(f"- ℹ️ {note}")
         add("")
 
+    if it.style_variants:
+        primary_count = sum(len(d.items) for d in it.days)
+        primary_drop = len(next(
+            (i for i in it.feasibility.issues if "未排入" in i), ""
+        ).split("：")[-1].split("、")) if any("未排入" in i for i in it.feasibility.issues) else 0
+        add("## 多风格方案对比（同一批车次/景点/住宿，仅编排节奏不同）")
+        add("")
+        add("| 风格 | 排入景点 | 未排入 | 预算 | 结论 |")
+        add("|---|---:|---:|---:|---|")
+        add(f"| **均衡（主方案）** | {primary_count} | {primary_drop} | ¥{it.total_cost:.0f} |"
+            f" {it.feasibility.status} |")
+        for v in it.style_variants:
+            add(f"| {v.name} | {sum(len(d.items) for d in v.days)} | {len(v.dropped)} |"
+                f" ¥{v.total_cost:.0f} | {v.status} |")
+        add("")
+        for v in it.style_variants:
+            add(f"### {v.name} · 逐日概览")
+            for i, d in enumerate(v.days, 1):
+                names = " → ".join(x.poi.name for x in d.items)
+                add(f"- Day {i}（{d.city}）：{names or '—'}")
+            if v.dropped:
+                add(f"- 未排入：{'、'.join(v.dropped)}")
+            add("")
+        add("> 上文逐日详情、地图与日历均基于主方案（均衡）；如需切换风格可加 `--compare-styles`"
+            " 后参考对比结果重新确认。")
+        add("")
+
     if it.stays:
         add("## 住宿安排（确定性选店：评分优先、距活动区就近）")
         add("")

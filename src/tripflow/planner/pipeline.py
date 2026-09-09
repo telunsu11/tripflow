@@ -63,6 +63,7 @@ def run_plan(
     interactive_cb: RequestCb | None = None,
     include_hotels: bool = True,
     with_hotel_prices: bool = False,
+    compare_styles: bool = False,
 ) -> PlanResult:
     """端到端规划。step_cb(i, total, text) 用于进度展示；interactive_cb(req) 用于
     交互式确认（仅在 TTY 场景由 CLI 传入）。"""
@@ -154,6 +155,7 @@ def run_plan(
 
         stays = []
         hotels = []
+        style_variants = []
         if include_hotels:
             step(6, total_steps, "搜索并选定住宿（高德 POI，评分/距活动区）…")
             try:
@@ -171,6 +173,25 @@ def run_plan(
                 )
             elif hotels:
                 all_notes.append("未选出住宿锚点（候选不足），通勤仍按市中心假设")
+        if compare_styles:
+            anchors_v = {s.city: (s.hotel.location, s.hotel.name) for s in stays} or None
+            nights_map = nights_by_city(transit.blocks)
+            from ..models import StyleVariant
+
+            for style_name in ("紧凑", "休闲"):
+                d_v, drop_v = build_days(
+                    transit.blocks, pois_by_city, centers, weather_by_city,
+                    commute_fns, [], anchors_v, style_name,
+                )
+                sched_pois_v = [v.poi for d in d_v for v in d.items]
+                _, total_v = build_budget(
+                    req, transit.legs, sched_pois_v, nights_map, stays=stays
+                )
+                feas_v = validate_all(req, transit.legs, d_v, drop_v, total_v, [], [])
+                style_variants.append(StyleVariant(
+                    name=style_name, days=d_v, dropped=drop_v,
+                    total_cost=total_v, status=feas_v.status,
+                ))
 
         deals: list = []
         if with_hotel_prices and s.meituan_ht_token and stays:
@@ -243,6 +264,7 @@ def run_plan(
         days=days,
         hotels=hotels,
         stays=stays,
+        style_variants=style_variants,
         deals=deals,
         budget=budget_items,
         total_cost=total_cost,
