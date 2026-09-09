@@ -626,6 +626,14 @@ def refresh(
 
 
 def main() -> None:
+    # Windows 低编码控制台（如 cp1252）下，emoji/中文会导致 UnicodeEncodeError；
+    # 降级为替换字符显示，而不是让命令崩溃
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(errors="replace")
+            except (OSError, ValueError):
+                pass
     app()
 
 
