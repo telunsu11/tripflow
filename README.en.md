@@ -18,7 +18,7 @@ Every number in a tripflow itinerary — ticket availability, prices, commute ti
 
 ## Quick start (≤3 commands)
 
-Platforms: macOS / Linux (tested) · Windows (experimental: `npx` launch wrapped via `cmd /c`, covered by CI — feedback welcome).
+Platforms: macOS / Linux (fully tested) · Windows (install/tests/CLI verified by CI on all three platforms — feedback welcome).
 
 Prerequisites: [uv](https://docs.astral.sh/uv/getting-started/install/), [Node.js](https://nodejs.org/) (the 12306 MCP launches via `npx`).
 

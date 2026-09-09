@@ -16,7 +16,7 @@
 
 ## 快速开始（≤3 条命令，≤10 分钟）
 
-平台：macOS / Linux（已实测）· Windows（实验性支持：npx 启动已做 `cmd /c` 适配并纳入 CI，欢迎反馈）。
+平台：macOS / Linux（已实测完整功能）· Windows（安装/测试/CLI 经 CI 三平台持续验证，完整功能欢迎反馈）。
 
 前置：[uv](https://docs.astral.sh/uv/getting-started/install/)、[Node.js](https://nodejs.org/)（12306 MCP 经 `npx` 拉起，`npx -v` 可检查）。
 
