@@ -97,6 +97,25 @@
     {% endfor %}
   </section>
 
+  {% if it.stays %}
+  <section>
+    <h2>住宿安排（确定性选店：评分优先、距活动区就近）</h2>
+    {% for s in it.stays %}
+    <div class="day">
+      <h3>{{ s.city }} · {{ s.hotel.name }}
+        <span class="weather">{{ date_cn(s.check_in) }} 入住 – {{ date_cn(s.check_out) }} 离店 · {{ s.nights }} 晚</span></h3>
+      <ul class="plain">
+        <li>每间夜约 <strong>¥{{ s.price_per_night }}</strong>（{% if s.price_basis == 'amap' %}高德参考价{% else %}城市档次估算{% endif %}）
+          {% if s.price_range %}｜美团区间 <strong>{{ s.price_range }}</strong>（未计入预算）{% endif %}</li>
+        {% if s.hotel.rating %}<li>评分 {{ s.hotel.rating }}{% if s.hotel.address %}｜{{ s.hotel.address }}{% endif %}</li>{% endif %}
+        {% if s.alternatives %}<li>备选：{{ s.alternatives | join('、') }}</li>{% endif %}
+      </ul>
+    </div>
+    {% endfor %}
+    <div class="note">酒店为信息展示与通勤锚点，不含预订；价格以实际预订页为准。</div>
+  </section>
+  {% endif %}
+
   {% if it.hotels %}
   <section>
     <h2>住宿候选（高德 POI，不含预订）</h2>

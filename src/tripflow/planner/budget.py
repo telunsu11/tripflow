@@ -44,6 +44,7 @@ def build_budget(
     legs: list[TransitChoice | None],
     pois: list[Poi],
     nights_by_city: dict[str, int],
+    stays: list | None = None,
 ) -> tuple[list[BudgetItem], float]:
     items: list[BudgetItem] = []
     n = req.travelers
@@ -66,18 +67,28 @@ def build_budget(
     rooms = math.ceil(n / 2)
     hotel = 0
     hotel_notes = []
+    stay_by_city = {s.city: s for s in (stays or [])}
     for city, nights in nights_by_city.items():
         if nights <= 0:
             continue
-        per = hotel_per_night(city)
+        stay = stay_by_city.get(city)
+        if stay is not None and stay.nights == nights:
+            per = stay.price_per_night
+            basis = "高德参考价" if stay.price_basis == "amap" else "城市档次估算"
+            note = f"{city} {nights}晚×¥{per}({basis})"
+            if stay.price_range:
+                note += f"，美团区间{stay.price_range}未计入"
+            hotel_notes.append(note)
+        else:
+            per = hotel_per_night(city)
+            hotel_notes.append(f"{city} {nights}晚×¥{per}(城市档次估算)")
         hotel += per * rooms * nights
-        hotel_notes.append(f"{city} {nights}晚×¥{per}")
     items.append(
         BudgetItem(
             category="住宿",
             amount=hotel,
             kind="estimate",
-            note=f"{rooms} 间（{'；'.join(hotel_notes) or '无需住宿'}，按城市档次的估算，未查询 OTA）",
+            note=f"{rooms} 间（{'；'.join(hotel_notes) or '无需住宿'}；参考/估算价，以实际预订为准）",
         )
     )
 

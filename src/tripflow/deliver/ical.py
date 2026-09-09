@@ -103,6 +103,36 @@ def render_ical(it: Itinerary) -> str:
                 stamp=stamp,
             )
 
+    for k, stay in enumerate(getattr(it, "stays", []) or [], 1):
+        h = stay.hotel
+        uid = hashlib.md5(f"stay-{h.poi_id}-{stay.check_in}-{k}".encode()).hexdigest() + "@tripflow"
+        lines += _event(
+            uid,
+            _fmt_dt(stay.check_in, "15:00"),
+            _fmt_dt(stay.check_in, "15:30"),
+            f"🏨 入住 {h.name}（{stay.city}）",
+            location=h.name,
+            description=(
+                f"{stay.nights} 晚（{stay.check_in} ~ {stay.check_out} 离店）\n"
+                f"每间夜约 ¥{stay.price_per_night}"
+                f"（{'高德参考' if stay.price_basis == 'amap' else '估算'}）\n"
+                "check-in 15:00 为酒店业通行时间（假设）"
+            ),
+            geo=h.location,
+            stamp=stamp,
+        )
+        uid2 = hashlib.md5(f"co-{h.poi_id}-{stay.check_out}-{k}".encode()).hexdigest() + "@tripflow"
+        lines += _event(
+            uid2,
+            _fmt_dt(stay.check_out, "11:30"),
+            _fmt_dt(stay.check_out, "12:00"),
+            f"🏨 离店 {h.name}（{stay.city}）",
+            location=h.name,
+            description="check-out 12:00 为酒店业通行时间（假设），以酒店规定为准",
+            geo=h.location,
+            stamp=stamp,
+        )
+
     lines.append(f"X-TRIPFLOW-STAMP:{stamp}")
     lines.append("END:VCALENDAR")
     folded: list[str] = []

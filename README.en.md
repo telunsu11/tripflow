@@ -7,6 +7,7 @@
 Every number in a tripflow itinerary — ticket availability, prices, commute times, weather — comes from live queries against China Railway (12306) and Amap, each stamped with its query time. The LLM only makes trade-offs and explains them; **it never invents numbers.** Every plan passes a deterministic feasibility check before it reaches you.
 
 - 🚄 **Transport comparison**: direct 12306 trains first, automatic transfer plans (with transfer-buffer validation) when direct fails
+- 🏨 **Hotel planning**: deterministic pick (rating first, nearest to activity cluster) as the daily commute anchor; price basis is tiered (Amap reference / city estimate / Meituan range) — never fake precision
 - 🧭 **Multi-city itineraries**: e.g. Shanghai → Suzhou → Hangzhou, with same-day transfers and per-city day allocation
 - 🗺️ **Shareable Amap itinerary map**: scan the QR with the Amap app to open your personalized map
 - 📄 Deliverables: Markdown + standalone HTML (QR embedded) + machine-readable JSON with full evidence chain

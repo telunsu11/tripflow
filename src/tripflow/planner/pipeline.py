@@ -18,7 +18,7 @@ from ..models import Itinerary
 from ..providers.amap import AmapClient
 from ..providers.rail import RailError, RailSession
 from .budget import build_budget, nights_by_city
-from .hotels import collect_hotels
+from .hotels import collect_hotels, pick_stays
 from .intake import parse_request
 from .pois import nominate_pois, validate_pois
 from .schedule import block_capacity, build_days, make_commute_fn
@@ -61,6 +61,8 @@ def run_plan(
     out_dir: Path | None = None,
     step_cb: StepCb | None = None,
     interactive_cb: RequestCb | None = None,
+    include_hotels: bool = True,
+    with_hotel_prices: bool = False,
 ) -> PlanResult:
     """端到端规划。step_cb(i, total, text) 用于进度展示；interactive_cb(req) 用于
     交互式确认（仅在 TTY 场景由 CLI 传入）。"""
@@ -75,7 +77,7 @@ def run_plan(
 
     from ..util import fmt_date
 
-    total_steps = 9
+    total_steps = 9 + (1 if (with_hotel_prices and s.meituan_ht_token) else 0)
     llm = LLMClient(s)
 
     step(1, total_steps, "解析需求（LLM）…")
@@ -144,30 +146,72 @@ def run_plan(
         centers = {city: amap.geo(city).location for city in req.cities}
         commute_fns = {city: make_commute_fn(amap, city) for city in req.cities}
         schedule_notes: list[str] = []
+        # 第一遍：定 POI 归属（供选店计算活动质心）
         days, dropped = build_days(
             transit.blocks, pois_by_city, centers, weather_by_city, commute_fns, schedule_notes
         )
         all_notes.extend(schedule_notes)
 
-        step(6, total_steps, "搜索住宿候选（高德 POI，按活动区域锚点）…")
-        try:
-            hotels = collect_hotels(amap, days)
-        except Exception as exc:  # noqa: BLE001 - 酒店候选失败不影响行程单
-            hotels = []
-            all_notes.append(f"住宿候选获取失败: {type(exc).__name__}")
+        stays = []
+        hotels = []
+        if include_hotels:
+            step(6, total_steps, "搜索并选定住宿（高德 POI，评分/距活动区）…")
+            try:
+                hotels = collect_hotels(amap, days)
+                stays = pick_stays(hotels, days, transit.blocks)
+            except Exception as exc:  # noqa: BLE001 - 酒店失败不影响行程单
+                hotels, stays = [], []
+                all_notes.append(f"住宿候选获取失败: {type(exc).__name__}")
+            if stays:
+                # 第二遍：以酒店为锚点重排（复用通勤缓存，仅新增 酒店→首景点 段）
+                anchors = {s.city: (s.hotel.location, s.hotel.name) for s in stays}
+                days, dropped = build_days(
+                    transit.blocks, pois_by_city, centers, weather_by_city,
+                    commute_fns, [], anchors,
+                )
+            elif hotels:
+                all_notes.append("未选出住宿锚点（候选不足），通勤仍按市中心假设")
 
-        step(7, total_steps, "核算预算（交通实价 + 分城市住宿估算）…")
+        deals: list = []
+        if with_hotel_prices and s.meituan_ht_token and stays:
+            from ..models import DealSection
+            from ..providers.meituan import MeituanClient
+            from ..util import now_ts
+            from .deals import build_priced_hotel_query, extract_price_range
+
+            step(7, total_steps, "查询美团住宿报价（每城约 1–2 分钟）…")
+            client = MeituanClient(s.meituan_ht_token)
+            for stay in stays:
+                query = build_priced_hotel_query(stay)
+                try:
+                    content = client.query(query, city=stay.city, origin_query=query)
+                except Exception as exc:  # noqa: BLE001 - 报价失败保持估算
+                    all_notes.append(f"{stay.city}住宿报价获取失败: {exc}")
+                    continue
+                rng = extract_price_range(content)
+                if rng:
+                    stay.price_range = rng
+                deals.append(DealSection(
+                    city=stay.city, topic="住宿报价", query=query, content=content,
+                    price_hint=rng or "", checked_at=now_ts(),
+                ))
+
+        budget_step = 7 if not (with_hotel_prices and s.meituan_ht_token and stays) else 8
+        step(budget_step, total_steps, "核算预算（交通实价 + 分城市住宿）…")
         scheduled_pois = [v.poi for day in days for v in day.items]
         budget_items, total_cost = build_budget(
-            req, transit.legs, scheduled_pois, nights_by_city(transit.blocks)
+            req, transit.legs, scheduled_pois,
+            nights_by_city(transit.blocks), stays=stays,
         )
 
-        step(8, total_steps, "确定性可行性检查…")
+        validate_step = budget_step + 1
+        step(validate_step, total_steps, "确定性可行性检查…")
         feasibility = validate_all(
             req, transit.legs, days, dropped, total_cost, transit.notes, all_notes
         )
 
-        step(9, total_steps, "生成高德行程地图（云端 MCP）…")
+        map_step = validate_step + 1
+        step(map_step, total_steps, "生成高德行程地图（云端 MCP）…")
         map_uri = ""
         head = tail = None
         if transit.go is not None:
@@ -178,7 +222,10 @@ def run_plan(
             map_uri = asyncio.run(
                 asyncio.wait_for(
                     generate_map_uri(
-                        s.amap_mcp_endpoint, days, station_poi=head, return_station_poi=tail
+                        s.amap_mcp_endpoint, days, station_poi=head, return_station_poi=tail,
+                        hotel_by_city={
+                            s_.city: s_.hotel for s_ in stays
+                        } if stays else None,
                     ),
                     timeout=45,
                 )
@@ -195,6 +242,8 @@ def run_plan(
         comparison=transit.comparison,
         days=days,
         hotels=hotels,
+        stays=stays,
+        deals=deals,
         budget=budget_items,
         total_cost=total_cost,
         feasibility=feasibility,

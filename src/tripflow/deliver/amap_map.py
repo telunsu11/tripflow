@@ -6,10 +6,23 @@ from ..models import DayPlan
 from ..util import fmt_date, parse_loc
 
 
-def _line_list(days: list[DayPlan], extra_head: dict | None, extra_tail: dict | None) -> list[dict]:
+def _line_list(
+    days: list[DayPlan],
+    extra_head: dict | None,
+    extra_tail: dict | None,
+    hotel_by_city: dict | None = None,
+) -> list[dict]:
     lines = []
     for i, day in enumerate(days, 1):
         points = []
+        hotel = (hotel_by_city or {}).get(day.city)
+        if hotel is not None:
+            try:
+                lng, lat = parse_loc(hotel.location)
+                points.append({"name": f"🏨{hotel.name}", "lon": lng, "lat": lat,
+                               "poiId": hotel.poi_id})
+            except ValueError:
+                pass
         if i == 1 and extra_head:
             points.append(extra_head)
         for v in day.items:
@@ -31,6 +44,7 @@ async def generate_map_uri(
     *,
     station_poi: dict | None = None,
     return_station_poi: dict | None = None,
+    hotel_by_city: dict | None = None,
     org_name: str = "tripflow 行程单",
 ) -> str:
     """连接高德云端 MCP 生成个人地图。station_poi 形如 {name, lon, lat, poiId}。"""
@@ -43,7 +57,7 @@ async def generate_map_uri(
             streamablehttp_client as streamable_http_client,
         )
 
-    line_list = _line_list(days, station_poi, return_station_poi)
+    line_list = _line_list(days, station_poi, return_station_poi, hotel_by_city)
     if not line_list:
         raise RuntimeError("行程中没有任何可定位的点位，无法生成地图")
 

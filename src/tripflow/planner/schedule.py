@@ -129,8 +129,12 @@ def _fill_block(
     commute_fn,
     days_map: dict[str, DayPlan],
     notes_out: list[str],
+    anchor: tuple[str, str] | None = None,
 ) -> list[str]:
-    """把 POI 贪心填进一个城市块，返回未排入的 POI 名。"""
+    """把 POI 贪心填进一个城市块，返回未排入的 POI 名。
+
+    anchor=(location, name) 为建议住宿锚点：每日首段通勤从酒店出发；
+    无锚点时保持旧行为（首点不计通勤，按住处就近假设）。"""
     wins = block_windows(block)
     valid = [
         (d, s, e) for (d, s, e) in wins if (_effective(s, e)[1] - _effective(s, e)[0]) >= MIN_WINDOW
@@ -138,6 +142,12 @@ def _fill_block(
     for d, s, e in wins:
         if (d, s, e) not in valid:
             days_map[d].notes.append("本日不安排景点（被交通占用）")
+    if anchor is not None and isinstance(block.arrive_leg, TransitChoice):
+        first_day = block.dates[0] if block.dates else ""
+        if first_day in days_map:
+            days_map[first_day].notes.append(
+                f"到达日假设先到「{anchor[1]}」寄存行李后出发（已计入到站缓冲）"
+            )
     dropped: list[str] = []
     if not valid or not pois:
         return [p.name for p in pois]
@@ -154,11 +164,13 @@ def _fill_block(
             leg = None
             if prev is not None and prev.location != poi.location:
                 leg = commute_fn(prev.location, poi.location)
+            elif prev is None and anchor is not None and anchor[0] != poi.location:
+                leg = commute_fn(anchor[0], poi.location)
             start = cur_time + (leg.minutes if leg else 0)
             end = start + poi.stay_minutes
             if end <= w_end:
                 if leg is not None:
-                    leg.from_name = prev.name if prev else ""
+                    leg.from_name = prev.name if prev else (anchor[1] if anchor else "")
                     leg.to_name = poi.name
                     days_map[d].legs.append(leg)
                 days_map[d].items.append(VisitItem(poi=poi, start=min2hm(start), end=min2hm(end)))
@@ -182,8 +194,11 @@ def build_days(
     weather_by_city: dict[str, dict[str, str]],
     commute_fns: dict[str, object],
     schedule_notes: list[str],
+    anchors: dict[str, tuple[str, str]] | None = None,
 ) -> tuple[list[DayPlan], list[str]]:
-    """多城市逐块编排；返回 (按日期排序的全部 DayPlan, 未排入 POI 列表)。"""
+    """多城市逐块编排；anchors 为各城住宿锚点 {city: (location, name)}。
+
+    返回 (按日期排序的全部 DayPlan, 未排入 POI 列表)。"""
     all_days: list[DayPlan] = []
     dropped: list[str] = []
     for block in blocks:
@@ -203,6 +218,7 @@ def build_days(
             commute_fns.get(city, None),
             days_map,
             schedule_notes,
+            anchor=(anchors or {}).get(city),
         )
         dropped.extend(f"{name}（{city}）" for name in block_dropped)
         for day in days_map.values():

@@ -68,3 +68,26 @@ def run_deals(
             )
         )
     return itinerary, failures
+
+
+_RANGE_PAT = re.compile(r"[¥￥]\s*(\d{2,5})\s*[-~至]\s*(\d{2,5})")
+_FROM_PAT = re.compile(r"[¥￥]\s*(\d{2,5})\s*起")
+
+
+def extract_price_range(content: str) -> str:
+    """从美团报价原文提取「¥200-400」或「¥219起」式区间；失败返回空。"""
+    m = _RANGE_PAT.search(content)
+    if m:
+        return f"¥{m.group(1)}-{m.group(2)}"
+    m = _FROM_PAT.search(content)
+    if m:
+        return f"¥{m.group(1)}起"
+    return ""
+
+
+def build_priced_hotel_query(stay) -> str:
+    """--with-hotel-prices 的按城报价查询（含日期与晚数，越具体越准）。"""
+    return (
+        f"{stay.city}住宿：{stay.check_in}入住，共{stay.nights}晚，"
+        f"推荐酒店和价格优惠（活动区域靠近{stay.hotel.name}一带）"
+    )

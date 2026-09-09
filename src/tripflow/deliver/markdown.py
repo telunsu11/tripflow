@@ -93,6 +93,27 @@ def render(it: Itinerary) -> str:
             add(f"- ℹ️ {note}")
         add("")
 
+    if it.stays:
+        add("## 住宿安排（确定性选店：评分优先、距活动区就近）")
+        add("")
+        for s in it.stays:
+            basis = "高德参考价" if s.price_basis == "amap" else "城市档次估算"
+            rng = f"｜美团区间 {s.price_range}（未计入预算）" if s.price_range else ""
+            add(f"### {s.city} · {s.hotel.name}"
+                f"（{fmt_date(s.check_in)} 入住 – {fmt_date(s.check_out)} 离店，{s.nights} 晚）")
+            add("")
+            add(f"- 每间夜约 ¥{s.price_per_night}（{basis}）{rng}")
+            if s.hotel.rating:
+                add(f"- 评分 {s.hotel.rating}"
+                    f"{'｜地址：' + s.hotel.address if s.hotel.address else ''}")
+            if s.hotel.cost:
+                add(f"- 高德参考消费：{s.hotel.cost}")
+            if s.alternatives:
+                add(f"- 备选：{'、'.join(s.alternatives)}")
+            add("")
+        add("> 酒店为信息展示与通勤锚点，不含预订；价格以实际预订页为准。")
+        add("")
+
     if it.hotels:
         add("## 住宿候选（高德 POI，不含预订）")
         add("")

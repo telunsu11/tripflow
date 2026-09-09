@@ -373,8 +373,15 @@ def plan(
     ),
     out_dir: Annotated[Path | None, typer.Option(help="输出目录（默认取 TRIP_OUTPUT_DIR）")] = None,
     yes: Annotated[bool, typer.Option("--yes", "-y", help="跳过交互追问（CI/脚本场景）")] = False,
+    no_hotels: Annotated[bool, typer.Option("--no-hotels", help="跳过住宿搜索与锚点编排")] = False,
+    with_hotel_prices: Annotated[
+        bool, typer.Option(
+            "--with-hotel-prices",
+            help="经美团查每城住宿报价（需 MEITUAN_HT_TOKEN，每城约多等 1–2 分钟）",
+        )
+    ] = False,
 ) -> None:
-    """端到端规划：需求 → 交通(直达/中转) → POI → 逐日编排 → 住宿候选 → 预算 → 可行性 → 行程单+地图+日历。"""
+    """端到端规划：需求 → 交通 → POI → 逐日编排 → 住宿选店 → 预算 → 可行性 → 行程单+地图+日历。"""
     from .planner.pipeline import run_plan
 
     s = get_settings()
@@ -404,7 +411,13 @@ def plan(
 
     try:
         result = run_plan(
-            request, settings=s, out_dir=out_dir, step_cb=step, interactive_cb=interactive
+            request,
+            settings=s,
+            out_dir=out_dir,
+            step_cb=step,
+            interactive_cb=interactive,
+            include_hotels=not no_hotels,
+            with_hotel_prices=with_hotel_prices,
         )
     except LLMError as exc:
         console.print(f"[red]{exc}[/]")

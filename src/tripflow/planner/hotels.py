@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from ..models import DayPlan, HotelPick
+import re
+
+from ..models import CityBlock, DayPlan, HotelPick, HotelStay
 from ..providers.amap import AmapClient
-from ..util import parse_loc
+from ..util import loc_dist, parse_loc
 
 HOTEL_TYPECODE_PREFIX = ("10",)  # 高德住宿服务大类
 HOTEL_KEYWORDS_IN_TYPE = ("酒店", "宾馆", "民宿", "旅馆", "公寓")
@@ -71,3 +73,69 @@ def collect_hotels(amap: AmapClient, days: list[DayPlan], *, limit: int = 3) -> 
         location, _ = anchor
         out.extend(search_hotels(amap, city, location, limit=limit))
     return out
+
+
+# 高德 cost 字段可能是 "¥288" / "288" / "200-400" 等形态，取首个整数作每间夜参考价
+_COST_PAT = re.compile(r"(\d{2,5})")
+
+
+def parse_cost(cost: str) -> int | None:
+    m = _COST_PAT.search(str(cost or ""))
+    return int(m.group(1)) if m else None
+
+
+def pick_stays(
+    hotels: list[HotelPick],
+    days: list[DayPlan],
+    blocks: list[CityBlock],
+) -> list[HotelStay]:
+    """确定性选店（无 LLM）：评分降序 → 距本城活动质心升序；价格依据分级。
+
+    - 高德 cost 有值 → price_basis=amap（参考价）
+    - 否则 → 城市档次估算（budget.HOTEL_PER_NIGHT）
+    - 备选取同城排名 2-3 名
+    """
+    from .budget import hotel_per_night
+
+    by_city_days: dict[str, list[DayPlan]] = {}
+    for d in days:
+        if d.city:
+            by_city_days.setdefault(d.city, []).append(d)
+    stays: list[HotelStay] = []
+    for block in blocks:
+        city_days = by_city_days.get(block.city, [])
+        anchor = anchor_of_days(city_days)
+        center = anchor[0] if anchor else "0,0"
+        candidates = [h for h in hotels if h.city == block.city and h.location]
+
+        def rank(h: HotelPick, _center: str = center) -> tuple:
+            rating = (
+                float(h.rating)
+                if h.rating and re.fullmatch(r"\d+(\.\d+)?", h.rating)
+                else 0.0
+            )
+            return (-rating, loc_dist(_center, h.location))
+
+        ordered = sorted(candidates, key=rank)
+        if not ordered:
+            continue
+        chosen = ordered[0]
+        cost = parse_cost(chosen.cost)
+        stays.append(HotelStay(
+            city=block.city,
+            hotel=chosen,
+            check_in=block.start_date,
+            check_out=block.end_date,  # 同日换乘：end 当天晨离开（末城即返程日）
+            nights=parse_date_nights(block),
+            price_basis="amap" if cost else "estimate",
+            price_per_night=cost or hotel_per_night(block.city),
+            alternatives=[h.name for h in ordered[1:3]],
+        ))
+    return stays
+
+
+def parse_date_nights(block: CityBlock) -> int:
+    """同日换乘语义：在城过夜数 = end - start。"""
+    from ..util import parse_date
+
+    return (parse_date(block.end_date) - parse_date(block.start_date)).days

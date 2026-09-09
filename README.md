@@ -39,9 +39,13 @@ uv run tripflow doctor   # 环境自检：缺什么、去哪补，它都会告�
 ## 命令
 
 ```bash
-# 端到端规划：一句话出完整行程单（Markdown + 单文件 HTML + JSON + 高德地图二维码）
+# 端到端规划：一句话出完整行程单（Markdown / HTML / JSON / .ics / 地图二维码）
 # 支持多目的地："9月12日到15日从上海去苏州和杭州，2人，人均1500"
 uv run tripflow plan "9月12日到14日从上海去成都，2人，人均预算3000，必去宽窄巷子"
+# 住宿规划：确定性选店（评分+距活动区）作为通勤锚点，行程围着酒店排
+# --with-hotel-prices 附带美团住宿报价（需 MEITUAN_HT_TOKEN，每城约多 1–2 分钟）
+uv run tripflow plan "……" --with-hotel-prices
+# --no-hotels 跳过住宿环节
 
 # 出发前刷新既有行程单的车票余票/天气（编排保持不变）
 uv run tripflow refresh output/成都-2026-09-12.json
@@ -106,7 +110,7 @@ uv run tripflow tickets 上海 成都 2026-09-12
 - [x] **M0** 骨架：config/env、LLM 客户端、12306/高德 provider（含 TTL 缓存）、`doctor` / `setup` / `tickets`
 - [x] **M1 MVP**：`plan` 一条命令产出完整行程单（直达/中转对比、逐日时间线、天气、预算、可行性、高德地图链接）
 - [x] **M2**：多目的地串联（同日换乘、分城编排）、HTML 行程单、`refresh` 出发前刷新、交互式预算追问、英文 README
-- [x] **M3**：日历导出（.ics）、余票监控（`watch` + webhook）、住宿候选（高德 POI）、跨站换乘校验（高德算站间通勤）、本地 Web UI（`serve`）
+- [x] **M3+ 住宿规划**：日历导出（.ics）、余票监控（`watch` + webhook）、住宿候选（高德 POI）、跨站换乘校验（高德算站间通勤）、本地 Web UI（`serve`）
 
 
 ## 免责声明

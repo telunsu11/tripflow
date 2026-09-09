@@ -153,6 +153,20 @@ class HotelPick(BaseModel):
     near: str = ""  # 锚点说明（如“距 拙政园 3km 内”）
 
 
+class HotelStay(BaseModel):
+    """一城一住：建议住宿锚点（确定性选店），价格只做参考、依据分级标注。"""
+
+    city: str
+    hotel: HotelPick
+    check_in: str
+    check_out: str
+    nights: int
+    price_basis: str  # amap（高德参考价）| estimate（城市档次估算）
+    price_per_night: int  # 每间夜参考/估算价
+    price_range: str = ""  # 美团报价区间（如 "¥200-400"，仅展示，不进预算）
+    alternatives: list[str] = Field(default_factory=list)  # 备选酒店名
+
+
 class BudgetItem(BaseModel):
     category: str
     amount: float
@@ -183,6 +197,7 @@ class Itinerary(BaseModel):
     comparison: list[dict] = Field(default_factory=list)
     days: list[DayPlan] = Field(default_factory=list)
     hotels: list[HotelPick] = Field(default_factory=list)
+    stays: list[HotelStay] = Field(default_factory=list)
     deals: list[DealSection] = Field(default_factory=list)
     budget: list[BudgetItem] = Field(default_factory=list)
     total_cost: float = 0
