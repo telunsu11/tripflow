@@ -159,3 +159,41 @@ def test_invalid_key_raises():
 def test_empty_key_raises():
     with pytest.raises(AmapError, match="AMAP_API_KEY"):
         AmapClient("")
+
+
+def test_qps_retry_and_throttle():
+    """QPS 限流码自动退避重试；min_interval=0 时测试不拖慢。"""
+    import time
+
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(200, json={"status": "0", "infocode": "10019", "info": "QPS超限"})
+        return httpx.Response(200, json={
+            "status": "1", "infocode": "10000",
+            "geocodes": [{"location": "1,1", "adcode": "440400", "city": "珠海市", "level": "市"}],
+        })
+
+    client = AmapClient("k", transport=httpx.MockTransport(handler), min_interval=0)
+    t0 = time.monotonic()
+    g = client.geo("珠海")
+    assert g.adcode == "440400"
+    assert calls["n"] == 2  # 第一次限流 → 重试成功
+    assert time.monotonic() - t0 < 1  # min_interval=0 不应明显拖慢
+
+
+def test_place_detail_city_field():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "status": "1", "pois": [{
+                "id": "B1", "name": "澳门皇冠假日酒店", "location": "0,0",
+                "city": "澳门特别行政区",
+                "business": {"rating": "4.5"},
+            }],
+        })
+
+    with AmapClient("k", transport=httpx.MockTransport(handler), min_interval=0) as c:
+        d = c.place_detail("B1")
+        assert d.city == "澳门特别行政区"

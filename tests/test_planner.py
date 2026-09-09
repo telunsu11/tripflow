@@ -166,6 +166,17 @@ def test_pick_back_prefers_afternoon():
     assert pick_back([morning, afternoon], 1).start_time == "15:00"
 
 
+def test_pick_go_depart_after():
+    morning = parse_ticket({**TICKET, "start_time": "08:00", "arrive_time": "09:00",
+                            "lishi": "01:00"})
+    afternoon = parse_ticket({**TICKET, "start_time": "14:30", "arrive_time": "15:40",
+                              "lishi": "01:10"})
+    # 用户要求下午出发 → 不得选早班车
+    assert pick_go([morning, afternoon], 1, not_before="13:00").start_time == "14:30"
+    # 无偏好时仍偏好上午
+    assert pick_go([morning, afternoon], 1).start_time == "08:00"
+
+
 def test_pick_intercity_prefers_morning():
     evening = parse_ticket(
         {**TICKET, "start_time": "16:00", "arrive_time": "18:00", "lishi": "02:00"}

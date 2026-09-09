@@ -40,6 +40,9 @@ def search_hotels(
         try:
             detail = amap.place_detail(p.id)
             rating, cost = detail.rating, getattr(detail, "cost", "")
+            detail_city = (getattr(detail, "city", "") or "").replace("市", "")
+            if detail_city and detail_city not in (city + p.name):
+                continue  # 口岸/边界区域的邻城 POI（如澳门酒店混入珠海）剔除
         except Exception:  # noqa: BLE001, S110 - 详情失败不阻塞候选列表
             pass
         picks.append(

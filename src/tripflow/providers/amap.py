@@ -55,6 +55,7 @@ class PlaceDetail:
     opentime: str = ""
     rating: str = ""
     type: str = ""
+    city: str = ""
 
 
 @dataclass
@@ -67,15 +68,25 @@ class TransitPlan:
 class AmapClient:
     V3 = "https://restapi.amap.com/v3"
     V5 = "https://restapi.amap.com/v5"
+    # 高德个人开发者 QPS 限流码（超限即稍候重试，而非把整个校验链吞掉）
+    QPS_RETRY_CODES = frozenset({"10019", "10021", "20003"})
 
     def __init__(
-        self, key: str, *, timeout: float = 15.0, transport: httpx.BaseTransport | None = None
+        self,
+        key: str,
+        *,
+        timeout: float = 15.0,
+        transport: httpx.BaseTransport | None = None,
+        min_interval: float = 0.35,
     ) -> None:
         if not key:
             raise AmapError("未配置 AMAP_API_KEY")
         self._key = key
         self._http = httpx.Client(timeout=timeout, transport=transport)
         self._adcode_cache: dict[str, str] = {}
+        # 个人 Key QPS≈3 → 默认 0.35s 请求间隔；企业 Key 可传 0 关闭
+        self._min_interval = min_interval
+        self._last_request_ts = 0.0
 
     # ---- 生命周期 ----
     def close(self) -> None:
@@ -89,12 +100,26 @@ class AmapClient:
 
     # ---- 底层 ----
     def _get(self, url: str, params: dict[str, str]) -> dict:
-        try:
-            resp = self._http.get(url, params={**params, "key": self._key})
-            resp.raise_for_status()
-            return resp.json()
-        except httpx.HTTPError as exc:
-            raise AmapError(f"请求高德失败: {exc}") from exc
+        import time as _time
+
+        tries = 0
+        while True:
+            # 客户端限速：避免 POI 校验阶段连发请求触发 QPS 限流
+            wait = self._min_interval - (_time.monotonic() - self._last_request_ts)
+            if wait > 0:
+                _time.sleep(wait)
+            self._last_request_ts = _time.monotonic()
+            try:
+                resp = self._http.get(url, params={**params, "key": self._key})
+                resp.raise_for_status()
+                data = resp.json()
+            except httpx.HTTPError as exc:
+                raise AmapError(f"请求高德失败: {exc}") from exc
+            if str(data.get("infocode", "")) in self.QPS_RETRY_CODES and tries < 3:
+                tries += 1
+                _time.sleep(0.4 * tries)  # 退避后重试
+                continue
+            return data
 
     @staticmethod
     def _ensure_v3(data: dict, what: str) -> None:
@@ -212,6 +237,7 @@ class AmapClient:
             ),
             rating=str(biz.get("rating", "") or ""),
             type=str(p.get("type", "") or ""),
+            city=str(p.get("city", "") or ""),
         )
 
     # ---- 市内交通 ----

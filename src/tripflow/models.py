@@ -18,6 +18,7 @@ class TripRequest(BaseModel):
     pace: str = "均衡"
     must_visit: list[str] = Field(default_factory=list)
     waypoints: list[str] = Field(default_factory=list)  # 途经城市（按顺序），单目的地为空
+    depart_after: str = ""  # 首段出发时段下限 HH:MM（如用户要求"下午出发"→"13:00"）
     preferences: str = ""
     assumptions: list[str] = Field(default_factory=list)
 

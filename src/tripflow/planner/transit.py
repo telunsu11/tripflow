@@ -181,14 +181,23 @@ def interline_choice(p: TransferPlan, travelers: int, date: str) -> TransitChoic
 
 
 # ---------- 选班 ----------
-def pick_go(trains: list[TrainTicket], travelers: int) -> TrainTicket | None:
-    """去程：优先 07:30–13:00 出发、22:00 前到达，到得越早越好。"""
+def pick_go(trains: list[TrainTicket], travelers: int, not_before: str = "") -> TrainTicket | None:
+    """去程：优先 07:30–13:00 出发、22:00 前到达，到得越早越好。
+
+    not_before（HH:MM）：用户指定出发时段下限（如"下午出发"=13:00），
+    时段窗口随之平移，无合适班次时才放宽。
+    """
     if not trains:
         return None
     pool = [t for t in trains if best_seat(t, travelers)] or trains
-    early = [t for t in pool if t.arrive_time <= "22:00" and "07:30" <= t.start_time <= "13:00"]
-    if early:
-        return min(early, key=lambda t: hm2min(t.arrive_time))
+    floor = hm2min(not_before) if not_before else hm2min("07:30")
+    upper = max(hm2min("13:00"), floor + 4 * 60)
+    window = [t for t in pool if t.arrive_time <= "22:00" and floor <= hm2min(t.start_time) <= upper]
+    if window:
+        return min(window, key=lambda t: hm2min(t.arrive_time))
+    after_floor = [t for t in pool if t.arrive_time <= "22:00" and hm2min(t.start_time) >= floor]
+    if after_floor:
+        return min(after_floor, key=lambda t: hm2min(t.arrive_time))
     before22 = [t for t in pool if t.arrive_time <= "22:00"]
     if before22:
         return min(before22, key=lambda t: hm2min(t.arrive_time))
@@ -222,12 +231,22 @@ PICKERS = {"go": pick_go, "intercity": pick_intercity, "back": pick_back}
 
 # ---------- 单段查询 ----------
 async def query_leg(
-    rail: RailSession, date: str, frm: str, to: str, kind: str, travelers: int, amap=None
+    rail: RailSession,
+    date: str,
+    frm: str,
+    to: str,
+    kind: str,
+    travelers: int,
+    amap=None,
+    not_before: str = "",
 ) -> TransitChoice | None:
     raw = await rail.tickets(date, frm, to, filter_flags="GD", sort="startTime")
     trains = prefer_hub_stations(filter_city_stations(raw, frm, to), frm, to)
     pick = PICKERS[kind]
-    chosen = pick(trains, travelers) if trains else None
+    if kind == "go" and not_before:
+        chosen = pick_go(trains, travelers, not_before=not_before) if trains else None
+    else:
+        chosen = pick(trains, travelers) if trains else None
     choice: TransitChoice | None = None
     if chosen is not None:
         choice = direct_choice(chosen, travelers, date)
@@ -256,7 +275,10 @@ async def plan_transit(rail: RailSession, req, amap=None) -> TransitOutcome:
     legs: list[TransitChoice | None] = []
     # 第 1 段：出发地 → 城市 1
     legs.append(
-        await query_leg(rail, req.depart_date, req.origin, req.cities[0], "go", travelers, amap)
+        await query_leg(
+            rail, req.depart_date, req.origin, req.cities[0], "go", travelers, amap,
+            not_before=getattr(req, "depart_after", "") or "",
+        )
     )
     # 中间段：城 k → 城 k+1（在城 k 的 end 当天上午出发，同日换乘）
     for k in range(1, len(req.cities)):
