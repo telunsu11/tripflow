@@ -260,9 +260,6 @@ def run_plan(
         except Exception as exc:  # noqa: BLE001 - 地图失败不影响行程单
             feasibility.notes.append(f"行程地图生成失败: {type(exc).__name__}（可重跑 plan 重试）")
 
-    stem = "-".join(req.cities) + "-" + req.depart_date
-    target = Path(out_dir) if out_dir else Path(s.trip_output_dir)
-    target.mkdir(parents=True, exist_ok=True)
     itinerary = Itinerary(
         request=req,
         legs=transit.legs,
@@ -278,6 +275,23 @@ def run_plan(
         map_uri=map_uri,
         generated_at=time.strftime("%Y-%m-%d %H:%M:%S"),
     )
+    paths = write_outputs(itinerary, s, out_dir)
+    return PlanResult(
+        itinerary=itinerary,
+        md_path=paths["md"],
+        html_path=paths["html"],
+        json_path=paths["json"],
+        qr_path=paths.get("qr"),
+        ical_path=paths["ical"],
+    )
+
+
+def write_outputs(itinerary: Itinerary, settings: Settings,
+                  out_dir: Path | None = None) -> dict[str, Path | None]:
+    """统一落盘：md / html / json / ics / 地图二维码。plan 与 replan 共用。"""
+    stem = "-".join(itinerary.request.cities) + "-" + itinerary.request.depart_date
+    target = Path(out_dir) if out_dir else Path(settings.trip_output_dir)
+    target.mkdir(parents=True, exist_ok=True)
     md_path = target / f"{stem}.md"
     html_path = target / f"{stem}.html"
     json_path = target / f"{stem}.json"
@@ -285,20 +299,16 @@ def run_plan(
     ical_path = target / f"{stem}.ics"
     md_path.write_text(render(itinerary), encoding="utf-8")
     json_path.write_text(itinerary.model_dump_json(indent=2), encoding="utf-8")
-    if map_uri:
+    if itinerary.map_uri:
         import qrcode
 
-        qrcode.make(map_uri).save(qr_path)
-    html_path.write_text(render_html(itinerary, qr_path if map_uri else None), encoding="utf-8")
-    write_ical(itinerary, ical_path)
-    return PlanResult(
-        itinerary=itinerary,
-        md_path=md_path,
-        html_path=html_path,
-        json_path=json_path,
-        qr_path=qr_path if map_uri else None,
-        ical_path=ical_path,
+        qrcode.make(itinerary.map_uri).save(qr_path)
+    html_path.write_text(
+        render_html(itinerary, qr_path if itinerary.map_uri else None), encoding="utf-8"
     )
+    write_ical(itinerary, ical_path)
+    return {"md": md_path, "html": html_path, "json": json_path,
+            "qr": qr_path if itinerary.map_uri else None, "ical": ical_path}
 
 
 def _station_point(amap: AmapClient, station_name: str, city: str) -> dict | None:

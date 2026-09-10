@@ -198,6 +198,17 @@ class DealSection(BaseModel):
     checked_at: float
 
 
+class TrainWatch(BaseModel):
+    """候补车次监控：不在行程内、放票/余票恢复即提醒。"""
+
+    code: str
+    date: str
+    from_city: str
+    to_city: str
+    last_seats_ok: bool | None = None  # None=首次检查（只记录基线不告警）
+    note: str = ""
+
+
 class Feasibility(BaseModel):
     status: str  # FEASIBLE | FEASIBLE_WITH_RISK | INFEASIBLE
     issues: list[str] = Field(default_factory=list)
@@ -218,6 +229,7 @@ class Itinerary(BaseModel):
     feasibility: Feasibility
     map_uri: str = ""
     generated_at: str = ""
+    watch_extra: list[TrainWatch] = Field(default_factory=list)  # 候补车次（watch 扩展）
 
     @property
     def go(self) -> TransitChoice | None:

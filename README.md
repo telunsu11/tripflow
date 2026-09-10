@@ -11,6 +11,8 @@
 - ☁️ 天气逐日穿插、预算分项核算（实价与估算分开标注）
 - 🔑 **密钥全部走环境变量**：LLM 任意 OpenAI 兼容端点可插拔（GLM / DeepSeek / Qwen / Ollama…）
 - 🎫 `tripflow deals`（可选）：美团酒旅优惠核查——门票价格/免票政策原文附进行程单，预算口径不变
+- 🔁 **局部改签**：`replan` 锁定车次与住宿，单点换景点、确定性重排、旧/新差异对照——改需求不再全量重跑
+- 🎫 **候补监控**：`watch --add-train` 盯「余票不足」的车次，放票即提醒
 - 🛡️ **出行守护**：`watch` 不止盯余票——灾害天气预警、预报变化、出发前 24h 营业时间复查，管到出发那一刻
 - 🎭 **多风格对比**：`--compare-styles` 一次附上紧凑/休闲方案（确定性流水线，同输入同结果，不像 LLM 每次随机）
 - 📊 参考数据可覆盖：枢纽站表/酒店价目/餐饮标准在 `src/tripflow/data/*.yaml`，在 `~/.tripflow/data/` 放同名文件即可合并覆盖（小城市用户自己补表）
@@ -53,9 +55,14 @@ uv run tripflow plan "……" --with-hotel-prices
 # 出发前刷新既有行程单的车票余票/天气（编排保持不变）
 uv run tripflow refresh output/成都-2026-09-12.json
 
-# 出行守护：余票监控 + 天气预警（暴雨/高温/低温）+ 出发前24h营业时间复查
-# 变化即提醒（终端 + 可选 webhook WATCH_WEBHOOK_URL），--once 适合 cron
+# 出行守护：余票监控 + 候补车次放票提醒 + 天气预警 + 出发前24h营业时间复查
 uv run tripflow watch output/成都-2026-09-12.json --interval 1800 --once
+# 候补：把查票时「余票不足」的车次加进监控，放票即提醒
+uv run tripflow watch output/x.json --add-train G7521 --train-date 2026-09-19 \
+                                    --train-from 上海 --train-to 杭州
+
+# 局部改签：锁定车次与住宿，只换景点重排（不查12306/不问LLM，秒级完成）
+uv run tripflow replan output/x.json --remove-poi 九溪十八涧 --add-poi "杭州@西溪湿地"
 
 # 多风格对比：同一批车次/景点/住宿，附紧凑/休闲两种编排节奏的对比表
 uv run tripflow plan "……" --compare-styles

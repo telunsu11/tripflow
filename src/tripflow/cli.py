@@ -489,8 +489,13 @@ def watch(
     webhook: Annotated[
         str, typer.Option("--webhook", help="变化时 POST 通知的 URL（默认取 WATCH_WEBHOOK_URL）")
     ] = "",
+    add_train: Annotated[str, typer.Option("--add-train", help="加入候补车次号（配合下方三项）")] = "",
+    train_date: Annotated[str, typer.Option("--train-date", help="候补车次日期 yyyy-MM-dd")] = "",
+    train_from: Annotated[str, typer.Option("--train-from", help="候补出发城市")] = "",
+    train_to: Annotated[str, typer.Option("--train-to", help="候补到达城市")] = "",
+    remove_train: Annotated[str, typer.Option("--remove-train", help="移除候补：车次@日期")] = "",
 ) -> None:
-    """监控行程单所选车次的余票/票价，变化即提醒（终端 + 可选 webhook）。"""
+    """监控行程车次余票/票价 + 候补车次放票；可选守护（天气/营业时间）。"""
     import json as _json
 
     from .models import Itinerary
@@ -501,6 +506,31 @@ def watch(
     if not s.amap_api_key and not s.rail_mcp_url:
         pass  # watch 只依赖 12306 MCP
     itinerary = Itinerary.model_validate(_json.loads(target.read_text("utf-8")))
+    from .models import TrainWatch
+
+    if add_train:
+        if not (train_date and train_from and train_to):
+            console.print("[red]--add-train 需同时提供 --train-date/--train-from/--train-to[/]")
+            raise typer.Exit(1)
+        if any(w.code == add_train and w.date == train_date for w in itinerary.watch_extra):
+            console.print(f"[yellow]{add_train}@{train_date} 已在候补列表[/]")
+        else:
+            itinerary.watch_extra.append(
+                TrainWatch(code=add_train, date=train_date, from_city=train_from, to_city=train_to)
+            )
+        target.write_text(itinerary.model_dump_json(indent=2), encoding="utf-8")
+        console.print(f"✅ 候补已加入：{add_train} {train_date} {train_from}→{train_to}"
+                      f"（共 {len(itinerary.watch_extra)} 个候补）")
+        raise typer.Exit(0)
+    if remove_train:
+        code, _, d = remove_train.partition("@")
+        before = len(itinerary.watch_extra)
+        itinerary.watch_extra = [
+            w for w in itinerary.watch_extra if not (w.code == code and (not d or w.date == d))
+        ]
+        target.write_text(itinerary.model_dump_json(indent=2), encoding="utf-8")
+        console.print(f"已移除 {before - len(itinerary.watch_extra)} 个候补")
+        raise typer.Exit(0)
     hook = webhook or os.environ.get("WATCH_WEBHOOK_URL", "")
     console.print(
         f"开始监控 [bold]{target.name}[/]"
@@ -508,19 +538,24 @@ def watch(
         f"每 {interval}s 检查，Ctrl-C 退出）"
     )
 
-    async def check() -> Itinerary:
+    async def check() -> tuple[Itinerary, list[str]]:
+        from .planner.watch import check_extra_trains
+
         async with RailSession(s) as rail:
-            return await watch_once(rail, itinerary)
+            it2 = await watch_once(rail, itinerary)
+            extra_changes = await check_extra_trains(rail, it2) if it2.watch_extra else []
+            return it2, extra_changes
 
     prev = snapshot(itinerary)
     while True:
         try:
-            itinerary = asyncio.run(asyncio.wait_for(check(), timeout=240))
+            itinerary, extra_changes = asyncio.run(asyncio.wait_for(check(), timeout=240))
         except RailError as exc:
             console.print(f"[red]检查失败:[/] {exc}")
         else:
             now = time.strftime("%H:%M:%S")
             changes = diff_snapshots(prev, snapshot(itinerary))
+            changes.extend(extra_changes)
             # —— 出行守护：天气预警（覆盖期内总是查）+ 最终 24h 营业时间复查 ——
             if s.amap_api_key:
                 alerts, updates = _guard_check(itinerary, final_24h=is_final_24h(
@@ -590,6 +625,62 @@ def hotels(
         table.add_row(h.name, h.rating or "—", h.cost or "—", h.address or "—")
     console.print(table)
     console.print("[dim]POI 级信息展示，不含预订；价格以实际渠道为准[/]")
+
+
+# ============================================================
+# replan：局部改签（锁定车次与住宿，只换景点重排）
+# ============================================================
+@app.command()
+def replan(
+    target: Annotated[Path, typer.Argument(help="行程单 JSON 路径")],
+    remove_poi: Annotated[
+        list[str] | None, typer.Option("--remove-poi", help="移除景点名（可多次）")
+    ] = None,
+    add_poi: Annotated[str, typer.Option("--add-poi", help="新增景点：城市@景点名")] = "",
+    no_map: Annotated[bool, typer.Option("--no-map", help="跳过地图重生成")] = False,
+) -> None:
+    """局部调整：不查 12306、不问 LLM、不动酒店——车次与住宿天然锁定，只重排景点。"""
+    import json as _json
+
+    from .llm import LLMError
+    from .models import Itinerary
+    from .planner.pipeline import write_outputs
+    from .planner.replan import run_replan
+
+    s = get_settings()
+    if not s.amap_api_key:
+        console.print("[red]缺少 AMAP_API_KEY[/]")
+        raise typer.Exit(1)
+    itinerary = Itinerary.model_validate(_json.loads(target.read_text("utf-8")))
+    adds = []
+    if add_poi:
+        city, _, name = add_poi.partition("@")
+        if not (city and name):
+            console.print("[red]--add-poi 格式：城市@景点名，如 杭州@西溪国家湿地公园[/]")
+            raise typer.Exit(1)
+        adds.append((city, name))
+
+    console.print(
+        f"局部调整 [bold]{target.name}[/]"
+        f"（车次 {sum(1 for leg in itinerary.legs if leg)} 段与"
+        f" {len(itinerary.stays)} 处住宿锁定不变）…"
+    )
+    try:
+        new_it, changes = run_replan(
+            itinerary, s, remove_pois=remove_poi, add_pois=adds, regenerate_map=not no_map
+        )
+    except (ValueError, LLMError) as exc:
+        console.print(f"[red]{exc}[/]（原行程单未改动）")
+        raise typer.Exit(1) from exc
+
+    paths = write_outputs(new_it, s, target.parent)
+    target.write_text(new_it.model_dump_json(indent=2), encoding="utf-8")
+
+    console.rule("[bold]局部调整完成[/]")
+    for c in changes:
+        console.print(f"  · {c}")
+    console.print(f"可行性: {new_it.feasibility.status}｜预算: ¥{new_it.total_cost:.0f}")
+    console.print(f"已更新: {paths['md']} / {paths['html']} / {target.name}")
 
 
 # ============================================================
