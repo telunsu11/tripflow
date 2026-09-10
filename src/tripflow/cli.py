@@ -638,8 +638,11 @@ def replan(
     ] = None,
     add_poi: Annotated[str, typer.Option("--add-poi", help="新增景点：城市@景点名")] = "",
     no_map: Annotated[bool, typer.Option("--no-map", help="跳过地图重生成")] = False,
+    style: Annotated[str, typer.Option("--style", help="编排风格：均衡|紧凑|休闲")] = "均衡",
 ) -> None:
-    """局部调整：不查 12306、不问 LLM、不动酒店——车次与住宿天然锁定，只重排景点。"""
+    """局部调整：不查 12306、不问 LLM、不动酒店——车次与住宿天然锁定，只重排景点。
+
+    显式 --add-poi 的景点会强制排入（允许当日提早出发，硬约束不变）。"""
     import json as _json
 
     from .llm import LLMError
@@ -667,7 +670,8 @@ def replan(
     )
     try:
         new_it, changes = run_replan(
-            itinerary, s, remove_pois=remove_poi, add_pois=adds, regenerate_map=not no_map
+            itinerary, s, remove_pois=remove_poi, add_pois=adds,
+            regenerate_map=not no_map, style=style,
         )
     except (ValueError, LLMError) as exc:
         console.print(f"[red]{exc}[/]（原行程单未改动）")

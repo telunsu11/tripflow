@@ -198,3 +198,67 @@ def test_watch_extra_state_machine():
     # 无变化 → 静默
     rail3 = FakeRail({("2026-09-19", "上海", "杭州"): [_available()]})
     assert asyncio.run(check_extra_trains(rail3, it)) == []
+
+
+# ---------- 强制排入（显式指令优先） + 对比表原因 ----------
+def test_forced_insertion_early_start():
+    """离开日 09:30 起排不下（150min+通勤），强制排入允许 08:00 出发。"""
+    from tripflow.models import CityBlock, CommuteLeg
+    from tripflow.planner.schedule import build_days
+
+    depart = TransitChoice(kind="direct", date="2026-09-21", code="G9", depart_time="13:32",
+                           arrive_time="14:30", summary="", seats_ok=True, checked_at=0)
+    block = CityBlock(city="杭州", start_date="2026-09-21", end_date="2026-09-21",
+                      depart_leg=depart)
+    park = Poi(name="西溪湿地", poi_id="x1", location="120.06,30.26", stay_minutes=150)
+
+    def commute(a, b, date=None):
+        return CommuteLeg(from_name="", to_name="", mode="公交", minutes=50)  # 09:30+50+150=12:50 > 12:32
+
+    anchors = {"杭州": ("120.1,30.2", "民宿")}
+    # 常规：09:30+50 通勤+150 = 12:50 > 12:32 排不进
+    _days, dropped = build_days([block], {"杭州": [park]}, {"杭州": "120.1,30.2"},
+                                {"杭州": {}}, {"杭州": commute}, [], anchors=anchors)
+    assert dropped == ["西溪湿地（杭州）"]
+    # 强制：08:00 出发 → 08:50+150=11:20 ≤ 12:32 ✓ 且有提早注记
+    days_f, dropped_f = build_days([block], {"杭州": [park]}, {"杭州": "120.1,30.2"},
+                                   {"杭州": {}}, {"杭州": commute}, [], anchors=anchors,
+                                   forced={"西溪湿地"})
+    assert not dropped_f
+    assert days_f[0].items[0].start == "08:50"
+    assert any("提早出发" in n for n in days_f[0].notes)
+
+
+def test_forced_respects_hard_constraints():
+    """强制也不能突破闭馆：闭馆 11:00 时 08:00 出发也放不下 150min → 仍拒绝。"""
+    from tripflow.models import CityBlock, CommuteLeg
+    from tripflow.planner.schedule import build_days
+
+    block = CityBlock(city="杭州", start_date="2026-09-21", end_date="2026-09-21")
+    park = Poi(name="早闭馆园", poi_id="x2", location="120.0,30.2", stay_minutes=150,
+               opentime="08:00-10:30")
+
+    def commute(a, b, date=None):
+        return CommuteLeg(from_name="", to_name="", mode="步行", minutes=30)
+
+    _days, dropped = build_days(
+        [block], {"杭州": [park]}, {"杭州": "120.0,30.2"},
+        {"杭州": {}}, {"杭州": commute}, [],
+        anchors={"杭州": ("120.1,30.3", "民宿")},  # 与 POI 错开坐标，通勤 30min 生效
+        forced={"早闭馆园"},
+    )
+    assert dropped == ["早闭馆园（杭州）"]  # 08:00+30 通勤+150=11:00 > 闭馆 10:30——硬约束优先
+
+
+def test_variant_issues_render():
+    from tripflow.deliver.markdown import render
+    from tripflow.models import StyleVariant
+
+    it = _itinerary()
+    it.style_variants = [
+        StyleVariant(name="紧凑", days=it.days, total_cost=3000,
+                     status="INFEASIBLE", issues=["预算硬超支：估算 ¥3000 > 预算 ¥2000 的 130%"]),
+    ]
+    md = render(it)
+    assert "INFEASIBLE（预算硬超支" in md
+    assert "不建议直接采用" in md

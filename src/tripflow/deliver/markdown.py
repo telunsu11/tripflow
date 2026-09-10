@@ -108,8 +108,11 @@ def render(it: Itinerary) -> str:
         add(f"| **均衡（主方案）** | {primary_count} | {primary_drop} | ¥{it.total_cost:.0f} |"
             f" {it.feasibility.status} |")
         for v in it.style_variants:
+            reason = f"（{v.issues[0][:24]}…）" if v.status == "INFEASIBLE" and v.issues else ""
             add(f"| {v.name} | {sum(len(d.items) for d in v.days)} | {len(v.dropped)} |"
-                f" ¥{v.total_cost:.0f} | {v.status} |")
+                f" ¥{v.total_cost:.0f} | {v.status}{reason} |")
+        add("")
+        add("> 紧凑/休闲为参考方案（主方案为均衡）；INFEASIBLE 附主因，不建议直接采用。")
         add("")
         for v in it.style_variants:
             add(f"### {v.name} · 逐日概览")

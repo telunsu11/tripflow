@@ -108,6 +108,7 @@ def run_replan(
     remove_pois: list[str] | None = None,
     add_pois: list[tuple[str, str]] | None = None,  # (city, name)
     regenerate_map: bool = True,
+    style: str = "均衡",
 ) -> tuple[Itinerary, list[str]]:
     """返回 (新行程单, 变更说明)。失败抛异常且不改动原对象。"""
     from ..deliver.amap_map import generate_map_uri
@@ -137,10 +138,12 @@ def run_replan(
             if not hit:
                 raise ValueError(f"未找到要移除的景点「{name}」（行程内已排景点中无此名称）")
         added = []
+        added_pois = []
         for city, name in add_pois:
             poi = validate_single_poi(amap, city, name)
             pois_by_city.setdefault(city, []).append(poi)
             added.append(f"{city}·{poi.name}")
+            added_pois.append(poi)
 
         # 2) 重建城市块与编排（锚点=既有住宿，车次不动）
         blocks = blocks_from_days(itinerary.days, itinerary.legs)
@@ -154,8 +157,11 @@ def run_replan(
         anchors = {s.city: (s.hotel.location, s.hotel.name)
                    for s in itinerary.stays} or None
         notes: list[str] = []
+        # 显式新增 → 强制排入（允许当日提早出发，硬约束不变）
+        added_names = {p.name for p in added_pois}
         new_days, dropped = build_days(
-            blocks, pois_by_city, centers, weather_by_city, commute_fns, notes, anchors
+            blocks, pois_by_city, centers, weather_by_city, commute_fns, notes, anchors,
+            style=style, forced=added_names,
         )
 
         # 3) 预算与可行性（车次/住宿沿用原值）
@@ -201,7 +207,13 @@ def run_replan(
         changes.append(f"移除：{'、'.join(removed)}")
     if added:
         changes.append(f"新增：{'、'.join(added)}")
+    added_failed = [n for n in added_names if any(n in d for d in dropped)]
     if dropped:
         changes.append(f"容量不足未排入：{'、'.join(dropped)}")
+    for n in added_failed:
+        changes.append(
+            f"⚠ 显式新增「{n}」仍无法排入：受闭馆/返程时间硬约束（提早出发也放不下）。"
+            f"可尝试 --style 紧凑、移除同日其他景点，或换日重排"
+        )
     changes.extend(diff_days(itinerary.days, new_days))
     return new_it, changes

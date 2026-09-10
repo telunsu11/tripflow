@@ -197,6 +197,7 @@ def run_plan(
                 style_variants.append(StyleVariant(
                     name=style_name, days=d_v, dropped=drop_v,
                     total_cost=total_v, status=feas_v.status,
+                    issues=[i for i in feas_v.issues if "无可用" not in i][:2],
                 ))
 
         deals: list = []

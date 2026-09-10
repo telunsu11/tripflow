@@ -106,6 +106,7 @@ STYLE_PARAMS: dict[str, dict] = {
 ARRIVAL_BUFFER = 60  # 到站后 60 分钟开始游玩
 DEPART_BUFFER = 60  # 提前 60 分钟到站（高铁安检余量；此前 90 过保守挤掉了离开日半天）
 MIN_WINDOW = 60  # 窗口不足 1 小时视为无效
+FORCE_DAY_START = 8 * 60  # 强制排入（用户显式新增）时允许的最早出发 08:00
 
 
 def make_commute_fn(amap: AmapClient, city: str):
@@ -233,8 +234,12 @@ def _fill_block(
     notes_out: list[str],
     anchor: tuple[str, str] | None = None,
     style: str = "均衡",
+    forced: frozenset[str] = frozenset(),
 ) -> list[str]:
     """把 POI 贪心填进一个城市块，返回未排入的 POI 名。
+
+    forced 中的 POI 名为用户显式指令：允许空日提早至 08:00 出发（紧凑节奏），
+    但不突破闭馆/返程等硬约束；排入后当日注记提早出发。
 
     anchor=(location, name) 为建议住宿锚点：每日首段通勤从酒店出发；
     无锚点时保持旧行为（首点不计通勤，按住处就近假设）。"""
@@ -268,6 +273,7 @@ def _fill_block(
 
     for poi in order_pois(pois, center):
         placed = False
+        is_forced = poi.name in forced
         for i, (d, s, e) in enumerate(valid):
             ow = parse_opentime(poi.opentime, d)  # 营业时间按候选日解析（季节段/闭馆日）
             _, w_end = eff(s, e)
@@ -280,7 +286,12 @@ def _fill_block(
             leg = None
             if origin is not None and origin != poi.location:
                 leg = commute_fn(origin, poi.location, d)  # d: 出行日，用于过滤工作日/周末线路
-            start = day_time[i] + (leg.minutes if leg else 0)
+            base = day_time[i]
+            early = False
+            if is_forced and day_last[i] is None and s is None and base > FORCE_DAY_START:
+                base = FORCE_DAY_START  # 显式指令优先：空日允许提早出发
+                early = True
+            start = base + (leg.minutes if leg else 0)
             if ow and start < ow.open_min:
                 start = ow.open_min  # 早到则等开园
             end = start + poi.stay_minutes
@@ -291,6 +302,10 @@ def _fill_block(
                     leg.to_name = poi.name
                     days_map[d].legs.append(leg)
                 days_map[d].items.append(VisitItem(poi=poi, start=min2hm(start), end=min2hm(end)))
+                if early:
+                    days_map[d].notes.append(
+                        f"为排入「{poi.name}」当日提早出发（紧凑节奏，硬约束不变）"
+                    )
                 day_time[i] = end + buf
                 day_last[i] = poi
                 placed = True
@@ -309,8 +324,10 @@ def build_days(
     schedule_notes: list[str],
     anchors: dict[str, tuple[str, str]] | None = None,
     style: str = "均衡",
+    forced: set[str] | frozenset[str] | None = None,
 ) -> tuple[list[DayPlan], list[str]]:
-    """多城市逐块编排；anchors 为各城住宿锚点；style 见 STYLE_PARAMS。
+    """多城市逐块编排；anchors 为各城住宿锚点；style 见 STYLE_PARAMS；
+    forced 为用户显式指令的 POI 名（允许提早出发排入）。
 
     返回 (按日期排序的全部 DayPlan, 未排入 POI 列表)。"""
     all_days: list[DayPlan] = []
@@ -334,6 +351,7 @@ def build_days(
             schedule_notes,
             anchor=(anchors or {}).get(city),
             style=style,
+            forced=frozenset(forced or ()),
         )
         dropped.extend(f"{name}（{city}）" for name in block_dropped)
         for day in days_map.values():

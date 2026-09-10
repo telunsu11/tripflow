@@ -185,6 +185,7 @@ class StyleVariant(BaseModel):
     dropped: list[str] = Field(default_factory=list)
     total_cost: float = 0
     status: str = ""
+    issues: list[str] = Field(default_factory=list)  # 供对比表展示不可行原因
 
 
 class DealSection(BaseModel):
