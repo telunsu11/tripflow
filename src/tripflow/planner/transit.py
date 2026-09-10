@@ -159,6 +159,8 @@ def interline_choice(p: TransferPlan, travelers: int, date: str) -> TransitChoic
         else (f"同站换乘 等待{p.wait_time}" if p.same_station else "跨站换乘")
     )
     codes = "+".join(leg.train_code for leg in p.legs)
+    if len({leg.train_code for leg in p.legs}) == 1:
+        codes = f"{p.legs[0].train_code}（同车分段购票）"
     price_text = f"，二等座合计约 ¥{total:g}" if total else ""
     flag = "" if ok else "⚠️ 余票不足"
     return TransitChoice(
@@ -336,9 +338,25 @@ async def plan_transit(rail: RailSession, req, amap=None) -> TransitOutcome:
         )
     plans = await rail.interline(req.depart_date, req.origin, req.cities[0], limit=4)
     feasible_plans = [p for p in plans if interline_feasible(p)]
+    # 出发站须为出发城市枢纽站（剔除 松江/金山北 等远郊站拼出的"中转"）
+    from .reference import hub_stations
+
+    hubs = hub_stations().get(req.origin)
+    if hubs:
+        hub_plans = [p for p in feasible_plans if p.from_station in hubs]
+        if hub_plans:
+            feasible_plans = hub_plans
+        elif feasible_plans:
+            # 中转方案全部自远郊站出发（如 金山北/松江）——对市区用户不可行，宁缺毋滥
+            feasible_plans = []
+            notes.append("12306 返回的中转方案均自远郊站出发（如金山北/松江），已略去")
+    # 凌晨车次（<06:30）对旅行者基本不可行，除非别无选择
+    daytime = [p for p in feasible_plans if hm2min(p.start_time) >= hm2min("06:30")]
+    feasible_plans = daytime or feasible_plans
     if req.depart_after:
         in_window = [p for p in feasible_plans if hm2min(p.start_time) >= hm2min(req.depart_after)]
         feasible_plans = in_window or feasible_plans
+    # 同车次分段（G7521+G7521）实为直达分段购票，单独标注而非重复显示
     for p in feasible_plans[:2]:
         c = interline_choice(p, travelers, req.depart_date)
         if c:

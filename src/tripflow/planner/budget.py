@@ -27,6 +27,13 @@ def build_budget(
 ) -> tuple[list[BudgetItem], float]:
     items: list[BudgetItem] = []
     n = req.travelers
+    kids = list(getattr(req, "child_ages", []) or [])
+    under6 = sum(1 for a in kids if a < 6)  # 火车免票不占座（每名成人限带1名）
+    kid6plus = len(kids) - under6           # 6+ 岁按儿童优惠票（约半价）估算
+    kid_note = ""
+    if kids:
+        kid_note = (f"；儿童{len(kids)}名：{under6}名不满6岁免票不占座、"
+                    f"{kid6plus}名按半价估算（以 12306/景区规则为准）")
 
     transport = 0.0
     parts = []
@@ -34,16 +41,18 @@ def build_budget(
         if leg and leg.price_per_person:
             transport += leg.price_per_person
             parts.append(f"{leg.from_city}→{leg.to_city} {leg.seat_name} ¥{leg.price_per_person:g}")
+    transport_total = transport * n + transport * 0.5 * kid6plus
     items.append(
         BudgetItem(
             category="跨城交通",
-            amount=transport * n,
+            amount=transport_total,
             kind="real",
-            note=f"{n} 人（{'；'.join(parts) or '未含票价'}，12306 实价，含查询时间戳）",
+            note=f"{n} 成人{'+' + str(kid6plus) + '名儿童半价' if kid6plus else ''}"
+                 f"（{'；'.join(parts) or '未含票价'}，12306 实价{kid_note}）",
         )
     )
 
-    rooms = math.ceil(n / 2)
+    rooms = math.ceil((n + len(kids)) / 2)
     hotel = 0
     hotel_notes = []
     stay_by_city = {s.city: s for s in (stays or [])}
@@ -74,24 +83,26 @@ def build_budget(
     from .reference import daily_costs
 
     food_per_day = daily_costs()["food_per_person_day"]
-    food = food_per_day * n * req.days
+    food = food_per_day * (n + 0.5 * len(kids)) * req.days
     items.append(
         BudgetItem(
             category="餐饮",
             amount=food,
             kind="estimate",
-            note=f"{n} 人 × {req.days} 天 × 约 ¥{food_per_day}/人/天（估算）",
+            note=f"{n} 成人{'+' + str(len(kids)) + '儿童半量' if kids else ''} × {req.days} 天 × 约 ¥{food_per_day}/人/天（估算）",
         )
     )
 
-    fees = sum(p.entry_fee_estimate for p in pois) * n
+    entry_units = n + 0.5 * sum(1 for a in kids if a >= 6)  # 6 岁以下多数景区免票
+    fees = sum(p.entry_fee_estimate for p in pois) * entry_units
     known = [p.name for p in pois if p.entry_fee_estimate]
     items.append(
         BudgetItem(
             category="景点门票",
             amount=fees,
             kind="estimate",
-            note=f"按类型估算{('（' + '、'.join(known[:4]) + '…）') if known else ''}，以现场为准",
+            note=f"按类型估算{('（' + '、'.join(known[:4]) + '…）') if known else ''}"
+                 f"{'，儿童6岁以下免票/6岁以上半价估算' if kids else ''}，以现场为准",
         )
     )
 

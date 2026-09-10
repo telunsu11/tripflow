@@ -13,12 +13,22 @@ DAY_START = 9 * 60 + 30  # 09:30
 DAY_END = 22 * 60  # 22:00（晚间逛街/夜景是旅行常态）
 BUFFER_MIN = 15  # 两个行程点之间的缓冲
 
+def _is_weekend(date: str | None) -> bool:
+    if not date:
+        return False
+    try:
+        return parse_date(date).weekday() >= 5
+    except ValueError:
+        return False
+
+
 # ---- 营业时间解析（高德 opentime 字段的务实启发式）----
 # 形态示例："周一至周日 08:30-18:30 最晚进入17:30" / "10:00-20:00" /
 # "周二至周日 09:00-17:00开放 最晚进入16:30；周一不开放（法定节假日除外）…"
 # 取首个 HH:MM-HH:MM 作当日窗口（多日差异时段取保守值）；
 # 解析失败返回 None（不约束，由"未获取到营业时间"提示兜底）。
 _TIME_RANGE = re.compile(r"(\d{1,2}):(\d{2})\s*[-–—]\s*(\d{1,2}):(\d{2})")
+_DATE_RANGE = re.compile(r"(\d{1,2})月(\d{1,2})日?至(\d{1,2})月(\d{1,2})日?")
 _LAST_ENTRY = re.compile(r"最晚进入\s*(\d{1,2}):(\d{2})")
 _CLOSED_DAY = re.compile(r"周([一二三四五六日天])不开放")
 _WEEK_CHARS = "一二三四五六日天"
@@ -32,8 +42,30 @@ class OpenWindow:
     closed_weekdays: frozenset[int] = frozenset()  # Monday=0
 
 
-def parse_opentime(opentime: str) -> OpenWindow | None:
-    text = str(opentime or "").strip()
+def _applicable_segment(text: str, date: str | None) -> str:
+    """按出行日期挑适用的季节分段（"3月16日至4月30日 …"），找不到回退全文。"""
+    if not date:
+        return text
+    try:
+        d = parse_date(date)
+    except ValueError:
+        return text
+    for seg in re.split(r"[；;]", text):
+        m = _DATE_RANGE.search(seg)
+        if not m:
+            continue
+        sm, sd, em, ed = (int(x) for x in m.groups())
+        if sm <= em:  # 常规区间
+            in_range = (d.month, d.day) >= (sm, sd) and (d.month, d.day) <= (em, ed)
+        else:  # 跨年区间（如 11月1日至3月15日）
+            in_range = (d.month, d.day) >= (sm, sd) or (d.month, d.day) <= (em, ed)
+        if in_range:
+            return seg.strip()
+    return text
+
+
+def parse_opentime(opentime: str, date: str | None = None) -> OpenWindow | None:
+    text = _applicable_segment(str(opentime or "").strip(), date)
     if not text:
         return None
     m = _TIME_RANGE.search(text)
@@ -49,6 +81,22 @@ def parse_opentime(opentime: str) -> OpenWindow | None:
     return OpenWindow(open_min=o, close_min=c, last_entry=last_entry, closed_weekdays=closed)
 
 
+def opentime_for_date(opentime: str, date: str | None) -> str:
+    """按出行日期生成可读的营业时间行；解析失败回退清洗后的原文。"""
+    from ..providers.amap import clean_invisible
+
+    text = clean_invisible(opentime)
+    seg = _applicable_segment(text, date)
+    m = _TIME_RANGE.search(seg)
+    m2 = _LAST_ENTRY.search(seg)
+    if m and date:
+        window = f"{int(m[1]):02d}:{m[2]}-{int(m[3]):02d}:{m[4]}"
+        entry = f"（最晚进入 {m2[1]}:{m2[2]}）" if m2 else ""
+        d = parse_date(date)
+        return f"{d.month}月{d.day}日适用：{window}{entry}"
+    return text
+
+
 # 风格参数（仅改编排节奏，不改数据来源；均衡为主方案）
 STYLE_PARAMS: dict[str, dict] = {
     "均衡": {},
@@ -56,23 +104,25 @@ STYLE_PARAMS: dict[str, dict] = {
     "休闲": {"day_start": 10 * 60, "day_end": 21 * 60, "buffer": 25},
 }
 ARRIVAL_BUFFER = 60  # 到站后 60 分钟开始游玩
-DEPART_BUFFER = 90  # 提前 90 分钟到站
+DEPART_BUFFER = 60  # 提前 60 分钟到站（高铁安检余量；此前 90 过保守挤掉了离开日半天）
 MIN_WINDOW = 60  # 窗口不足 1 小时视为无效
 
 
 def make_commute_fn(amap: AmapClient, city: str):
-    """相邻两点通勤：公交方案优先，无公交或查询失败退化为步行。带请求级缓存。"""
-    cache: dict[tuple[str, str], CommuteLeg] = {}
+    """相邻两点通勤：公交方案优先（按出行日过滤工作日/周末线路），退化步行。
+    缓存按 (起终点, 工作日/周末) 分型；公交 ≥30 分钟时附打车对照（仅时长/里程，不估价）。"""
+    cache: dict[tuple[str, str, bool], CommuteLeg] = {}
 
-    def commute(a: str, b: str) -> CommuteLeg:
+    def commute(a: str, b: str, date: str | None = None) -> CommuteLeg:
         if a == b:
             return CommuteLeg(from_name="", to_name="", mode="同点", minutes=0)
-        key = (a, b)
+        weekend = _is_weekend(date)
+        key = (a, b, weekend)
         if key in cache:
             return cache[key]
         leg = None
         try:
-            plans = amap.transit(a, b, city=city)
+            plans = amap.transit(a, b, city=city, date=date)
             if plans:
                 p = plans[0]
                 leg = CommuteLeg(
@@ -101,6 +151,12 @@ def make_commute_fn(amap: AmapClient, city: str):
                 leg = CommuteLeg(
                     from_name="", to_name="", mode="步行(估)", minutes=max(10, round(km / 4 * 60))
                 )
+        if leg is not None and leg.mode == "公交" and leg.minutes >= 30:
+            try:  # 打车对照：仅真实驾车时长/里程，费用以打车软件为准
+                d_min, d_m = amap.driving(a, b)
+                leg.taxi_alt = f"打车约 {d_min} 分钟（{d_m / 1000:.0f}km）"
+            except AmapError:
+                pass
         cache[key] = leg
         return leg
 
@@ -212,8 +268,8 @@ def _fill_block(
 
     for poi in order_pois(pois, center):
         placed = False
-        ow = parse_opentime(poi.opentime)
         for i, (d, s, e) in enumerate(valid):
+            ow = parse_opentime(poi.opentime, d)  # 营业时间按候选日解析（季节段/闭馆日）
             _, w_end = eff(s, e)
             # 闭馆日（周X不开放）跳过
             if ow and parse_date(d).weekday() in ow.closed_weekdays:
@@ -223,7 +279,7 @@ def _fill_block(
             origin = prev.location if prev else (anchor[0] if anchor else None)
             leg = None
             if origin is not None and origin != poi.location:
-                leg = commute_fn(origin, poi.location)
+                leg = commute_fn(origin, poi.location, d)  # d: 出行日，用于过滤工作日/周末线路
             start = day_time[i] + (leg.minutes if leg else 0)
             if ow and start < ow.open_min:
                 start = ow.open_min  # 早到则等开园

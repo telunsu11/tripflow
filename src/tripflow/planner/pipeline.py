@@ -43,14 +43,20 @@ class PlanResult:
         lines = [f"可行性: {it.feasibility.status}"]
         for i, leg in enumerate(it.legs, 1):
             label = f"第{i}段" if len(it.legs) > 2 else ("去程" if i == 1 else "返程")
-            lines.append(f"{label}: {leg.summary}" if leg else f"{label}: 无可用班次")
+            if leg:
+                lines.append(f"{label}: {leg.summary}".replace("\n", " "))
+            else:
+                lines.append(f"{label}: 无可用班次")
         req = it.request
         budget = req.budget_effective_total
         hint = f" / 预算 ¥{budget:.0f}" if budget else ""
+        kids = f"，儿童{len(req.child_ages)}名" if req.child_ages else ""
         lines.append(
-            f"预算: 合计 ¥{it.total_cost:.0f}（人均 ¥{it.total_cost / req.travelers:.0f}{hint}）"
+            f"预算: 合计 ¥{it.total_cost:.0f}"
+            f"（{req.travelers} 成人{kids}，人均 ¥{it.total_cost / max(1, req.travelers):.0f}{hint}）"
         )
-        lines.extend(f"⚠️ {i}" for i in it.feasibility.issues)
+        # 单行 + 文本符号 ⚠（emoji 变体选择符会导致 rich 渲染时描述掉行）
+        lines.extend("⚠ " + " ".join(str(i).split()) for i in it.feasibility.issues)
         return lines
 
 

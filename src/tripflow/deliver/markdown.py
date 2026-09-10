@@ -85,10 +85,13 @@ def render(it: Itinerary) -> str:
             if v.poi.reason:
                 add(f"  - {v.poi.reason}")
             if v.poi.opentime:
-                add(f"  - 营业时间（高德核实）：{v.poi.opentime}")
+                from ..planner.schedule import opentime_for_date
+
+                add(f"  - 营业时间（高德核实）：{opentime_for_date(v.poi.opentime, day.date)}")
         for leg in day.legs:
             via = f"（{'→'.join(leg.lines)}）" if leg.lines else ""
-            add(f"- ↳ {leg.from_name} → {leg.to_name}：{leg.mode} 约 {leg.minutes} 分钟{via}")
+            taxi = f"｜{leg.taxi_alt}" if leg.taxi_alt else ""
+            add(f"- ↳ {leg.from_name} → {leg.to_name}：{leg.mode} 约 {leg.minutes} 分钟{via}{taxi}")
         for note in day.notes:
             add(f"- ℹ️ {note}")
         add("")

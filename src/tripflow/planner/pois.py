@@ -159,7 +159,11 @@ def validate_pois(
         seen_ids.add(picked.id)
         try:
             detail = amap.place_detail(picked.id)
-            location, opentime, rating = detail.location, detail.opentime, detail.rating
+            from ..providers.amap import clean_invisible
+
+            location = detail.location
+            opentime = clean_invisible(detail.opentime)
+            rating = detail.rating
         except Exception:  # noqa: BLE001
             location, opentime, rating = picked.location, "", ""
         core = _match_core(name, must_visit) or _match_core(picked.name, must_visit)

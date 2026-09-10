@@ -1,8 +1,9 @@
 """出行守护 + 多风格测试。"""
 
 from datetime import date
+from pathlib import Path
 
-from test_m3 import _itinerary
+from test_m3 import _itinerary, _req
 from test_planner import fake_commute
 
 from tripflow.deliver.markdown import render
@@ -253,3 +254,98 @@ def test_backfill_arrival_day_evening():
     assert day2_names == ["全天园"]           # CORE 在开放窗口内的整天
     assert day1_names == ["海滨步道"]          # 晚间点回填到达日（此前会留白）
     assert days[0].items[0].start >= "15:13"  # 到站 14:13 + 60min 缓冲（无锚点故无通勤）
+
+
+# ---------- 本轮实测反馈修复 ----------
+def test_transit_filters_workday_lines_on_weekend():
+    """周六出行应剔除「(工作日)」线路；整条方案全不可乘时弃用。"""
+    import httpx
+
+    from tripflow.providers.amap import AmapClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["date"] == "2026-09-19"  # 出行日期已传给高德
+        return httpx.Response(200, json={"status": "1", "infocode": "10000", "route": {"transits": [
+            {"duration": "3000", "walking_distance": "100", "segments": [
+                {"bus": {"buslines": [{"name": "WE1314路(工作日)"}, {"name": "地铁2号线"}]}}]},
+            {"duration": "3600", "walking_distance": "100", "segments": [
+                {"bus": {"buslines": [{"name": "WE1314路(工作日)"}, {"name": "WE999路(工作日)"}]}}]},
+        ]}})
+
+    with AmapClient("k", transport=httpx.MockTransport(handler), min_interval=0) as c:
+        plans = c.transit("0,0", "1,1", city="杭州", date="2026-09-19")  # 周六
+    assert len(plans) == 1                     # 第二条方案全为工作日线路 → 弃用
+    assert plans[0].lines == ["地铁2号线"]      # 工作日线路被剔除
+    # 工作日出行不剔除
+    with AmapClient("k", transport=httpx.MockTransport(
+            lambda r: httpx.Response(200, json={"status": "1", "infocode": "10000", "route": {"transits": [
+                {"duration": "3000", "walking_distance": "1", "segments": [
+                    {"bus": {"buslines": [{"name": "WE1314路(工作日)"}, {"name": "西湖外环线(工作日)"}]}}]}]}})), min_interval=0) as c:
+        plans_wd = c.transit("0,0", "1,1", city="杭州", date="2026-09-21")  # 周一
+    assert plans_wd[0].lines == ["WE1314路(工作日)", "西湖外环线(工作日)"]
+
+
+def test_opentime_seasonal_segment():
+    from tripflow.planner.schedule import opentime_for_date, parse_opentime
+
+    raw = ("3月16日至4月30日08:00-18:30 最晚进入18:00；"
+           "5月1日至10月31日08:00-20:00 最晚进入19:30；"
+           "11月1日至3月15日08:30-18:00")
+    # 9/19 适用夏季段
+    assert "9月19日适用" in opentime_for_date(raw, "2026-09-19")
+    assert "08:00-20:00" in opentime_for_date(raw, "2026-09-19")
+    assert "19:30" in opentime_for_date(raw, "2026-09-19")
+    w = parse_opentime(raw, "2026-09-19")
+    assert (w.open_min, w.close_min, w.last_entry) == (480, 1200, 1170)
+    # 12月 适用跨年冬季段
+    w2 = parse_opentime(raw, "2026-12-05")
+    assert (w2.open_min, w2.close_min) == (510, 1080)
+    # 零宽字符清洗
+    from tripflow.providers.amap import clean_invisible
+
+    assert clean_invisible("08:00\u200b-20:00") == "08:00-20:00"
+
+
+def test_child_pricing_rules():
+    from tripflow.planner.budget import build_budget
+
+    req = _req(return_date="2026-09-13", travelers=2)  # 2 成人
+    req.child_ages = [5]  # 1 名 5 岁儿童
+    stays = None
+    legs = [__import__("tripflow.models", fromlist=["TransitChoice"]).TransitChoice(
+        kind="direct", date="2026-09-12", code="G1", from_city="上海", to_city="杭州",
+        depart_time="09:00", arrive_time="10:00", summary="", seat_name="二等座",
+        price_per_person=100, seats_ok=True, checked_at=0),
+        __import__("tripflow.models", fromlist=["TransitChoice"]).TransitChoice(
+            kind="direct", date="2026-09-13", code="G2", from_city="杭州", to_city="上海",
+            depart_time="15:00", arrive_time="16:00", summary="", seat_name="二等座",
+            price_per_person=100, seats_ok=True, checked_at=0)]
+    items, _total = build_budget(req, legs, [], {"成都": 1}, stays=stays)
+    by = {i.category: i for i in items}
+    # 交通：2 成人 × 200 + 5 岁免票不占座 × 0 = 400
+    assert by["跨城交通"].amount == 400
+    assert "免票不占座" in by["跨城交通"].note
+    # 餐饮：(2 + 0.5) × 150 × 2天
+    assert by["餐饮"].amount == 2.5 * 150 * 2
+
+
+def test_taxi_alt_render():
+    from tripflow.models import CommuteLeg
+
+    leg = CommuteLeg(from_name="A", to_name="B", mode="公交", minutes=66,
+                     taxi_alt="打车约 20 分钟（12km）")
+    assert leg.taxi_alt
+    md = render(_itinerary())
+    assert "打车约" not in md  # 未设置时不出现
+
+
+def test_summary_lines_single_line():
+    from tripflow.planner.pipeline import PlanResult
+
+    it = _itinerary()
+    it.feasibility.issues = ["多行\n问题\n内容", "正常问题"]
+    result = PlanResult(itinerary=it, md_path=Path("/tmp/x.md"), html_path=Path("/tmp/x.html"),
+                        json_path=Path("/tmp/x.json"), qr_path=None, ical_path=Path("/tmp/x.ics"))
+    for line in result.summary_lines():
+        assert "\n" not in line
+    assert any("多行 问题 内容" == line[2:] for line in result.summary_lines())

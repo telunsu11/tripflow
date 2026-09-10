@@ -81,7 +81,7 @@ def test_build_days_with_hotel_anchor():
     ]}  # 10h 停留 → 每天只容一个点，强制跨天
     calls = []
 
-    def commute(a, b):
+    def commute(a, b, date=None):
         calls.append((a, b))
         return CommuteLeg(from_name="", to_name="", mode="公交", minutes=20)
 

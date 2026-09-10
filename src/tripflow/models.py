@@ -19,6 +19,7 @@ class TripRequest(BaseModel):
     must_visit: list[str] = Field(default_factory=list)
     waypoints: list[str] = Field(default_factory=list)  # 途经城市（按顺序），单目的地为空
     depart_after: str = ""  # 首段出发时段下限 HH:MM（如用户要求"下午出发"→"13:00"）
+    child_ages: list[int] = Field(default_factory=list)  # 同行儿童年龄（影响免票/半价规则）
     preferences: str = ""
     assumptions: list[str] = Field(default_factory=list)
 
@@ -77,6 +78,7 @@ class CommuteLeg(BaseModel):
     minutes: int
     distance_m: int = 0
     lines: list[str] = Field(default_factory=list)
+    taxi_alt: str = ""  # 打车对照（仅时长/里程，费用以打车软件为准）
 
 
 class VisitItem(BaseModel):

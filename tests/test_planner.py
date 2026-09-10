@@ -252,7 +252,7 @@ def _poi(name, loc, stay=120, core=False):
     return Poi(name=name, poi_id=f"id-{name}", location=loc, stay_minutes=stay, core=core)
 
 
-def fake_commute(a, b):
+def fake_commute(a, b, date=None):
     from tripflow.models import CommuteLeg
 
     return CommuteLeg(from_name="", to_name="", mode="公交", minutes=30)
@@ -346,7 +346,7 @@ def test_windows_from_transit():
     back = _choice("2026-09-14", "10:00", "20:00")
     d1, last = windows_from_transit(go, back)
     assert d1 == 20 * 60 + 35
-    assert last == 8 * 60 + 30
+    assert last == 9 * 60  # 10:00 - 60min（缓冲收紧，保住离开日半天）
 
 
 # ---------- budget ----------

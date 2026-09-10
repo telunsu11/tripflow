@@ -18,7 +18,9 @@ INTAKE_SYSTEM = """你是旅行规划助手的「需求解析」模块，把用�
 - 节假日（国庆、五一、中秋等）换算为当年具体日期
 - 多目的地行程：途经城市按顺序放入 waypoints（不含出发地 origin 与最终目的地 destination）；
   城市总数（含目的地）不能超过行程天数，否则报错规则不适用、正常解析
-- 预算没有说明人均还是总计时：默认按"人均"填 budget_per_person，并在 assumptions 里写明"预算默认按人均处理"
+- 预算没有说明人均还是总计时：默认按"人均"填 budget_per_person，并在 assumptions 里
+  精确写明「预算默认按人均处理」（此措辞用于触发 CLI 的交互确认，不可改写）
+- 同行儿童（如"带5岁小孩"）把每个孩子年龄填入 child_ages（整数数组）；成人数填 travelers
 - 没提到的信息用合理默认值，并把每个假设写进 assumptions（如：默认 1 人出行）
 - must_visit 只放用户明确要求必去的地点名
 - 用户指定了出发时段（如"下午出发"、"晚上到"）时：depart_after 填对应 HH:MM 下限
@@ -26,7 +28,7 @@ INTAKE_SYSTEM = """你是旅行规划助手的「需求解析」模块，把用�
 
 JSON 字段：
 origin, destination, waypoints(字符串数组，可为空), depart_date, return_date,
-depart_after(HH:MM 或空), travelers,
+depart_after(HH:MM 或空), travelers, child_ages(整数年龄数组，可为空),
 budget_per_person, budget_total, pace("省钱"|"均衡"|"松弛"),
 must_visit(字符串数组), preferences(其他偏好一句话), assumptions(字符串数组)"""
 

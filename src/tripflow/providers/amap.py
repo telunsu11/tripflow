@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Self
 
@@ -63,6 +64,29 @@ class TransitPlan:
     duration_sec: int
     walk_distance_m: int
     lines: list[str] = field(default_factory=list)
+
+
+_SERVICE_TAG = re.compile(r"[（(](工作日|周末|双休日|节假日)[）)]")
+_INVISIBLE_CHARS = str.maketrans("", "", "\u200b\u200c\u200d\ufeff\u00a0")
+
+
+def _line_runs_on(line_name: str, weekend: bool) -> bool:
+    """「WE1314路(工作日)」周六不可乘；「(周末/双休日)」工作日不可乘；无标记默认可乘。"""
+    tags = _SERVICE_TAG.findall(line_name)
+    if not tags:
+        return True
+    for tag in tags:
+        if tag == "工作日" and weekend:
+            continue
+        if tag in ("周末", "双休日") and not weekend:
+            continue
+        return True
+    return False
+
+
+def clean_invisible(text: str) -> str:
+    """去高德返回中的零宽/不可见字符（营业时间原文常见 \u200b 等）。"""
+    return str(text or "").translate(_INVISIBLE_CHARS).strip()
 
 
 class AmapClient:
@@ -241,6 +265,19 @@ class AmapClient:
         )
 
     # ---- 市内交通 ----
+    def driving(self, origin: str, destination: str) -> tuple[int, int]:
+        """驾车规划 → (分钟, 米)。用于长途通勤段的打车对照（不估价，费用以打车软件为准）。"""
+        data = self._get(
+            f"{self.V3}/direction/driving",
+            {"origin": origin, "destination": destination, "extensions": "base"},
+        )
+        self._ensure_v3(data, "驾车规划")
+        paths = (data.get("route") or {}).get("paths") or []
+        if not paths:
+            raise AmapError("驾车规划无结果")
+        p0 = paths[0]
+        return round(float(p0.get("duration", 0)) / 60), int(float(p0.get("distance", 0)))
+
     def walking(self, origin: str, destination: str) -> tuple[int, int]:
         """步行规划 → (分钟, 米)。"""
         data = self._get(
@@ -254,14 +291,33 @@ class AmapClient:
         return round(float(p.get("duration", 0)) / 60), int(float(p.get("distance", 0)))
 
     def transit(
-        self, origin: str, destination: str, city: str, cityd: str | None = None
+        self,
+        origin: str,
+        destination: str,
+        city: str,
+        cityd: str | None = None,
+        date: str | None = None,
     ) -> list[TransitPlan]:
-        """跨城时必须传 cityd（起点城市）。坐标格式：lng,lat。"""
+        """跨城时必须传 cityd（起点城市）。坐标格式：lng,lat。
+
+        date（yyyy-MM-dd）用于按出行日过滤「(工作日)/(周末)」类线路：
+        周六出行会剔除 仅工作日 运营的线路，整条方案无可乘线路时弃用该方案。
+        """
         params = {"origin": origin, "destination": destination, "city": city}
         if cityd:
             params["cityd"] = cityd
+        if date:
+            params["date"] = date
         data = self._get(f"{self.V3}/direction/transit/integrated", params)
         self._ensure_v3(data, "公交规划")
+        weekend = None
+        if date:
+            try:
+                from datetime import date as _date
+
+                weekend = _date.fromisoformat(date).weekday() >= 5
+            except ValueError:
+                weekend = None
         plans: list[TransitPlan] = []
         for t in (data.get("route") or {}).get("transits") or []:
             lines = [
@@ -269,6 +325,11 @@ class AmapClient:
                 for seg in (t.get("segments") or [])
                 for line in ((seg.get("bus") or {}).get("buslines") or [])
             ]
+            if weekend is not None:
+                kept = [ln for ln in lines if _line_runs_on(ln, weekend)]
+                if lines and not kept:
+                    continue  # 该方案全部线路当日不运营
+                lines = kept
             plans.append(
                 TransitPlan(
                     duration_sec=int(float(t.get("duration", 0))),
